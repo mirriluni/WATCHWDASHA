@@ -240,16 +240,23 @@ function App() {
     </form>}
     <div className="room">
       <div className="stage-wrap">
-        <div className={`stage ${video ? 'has-video' : ''}`} ref={stage}>
-          {!video && <div className="empty">
-            <div className="play-icon">▶</div>
-            <h1>Смотрите вместе, минута в минуту.</h1>
-            <p>Вставьте ссылку на видео и позовите друзей в комнату.</p>
-            <form className="empty-form" onSubmit={add}>
-              <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" />
-              <button type="submit">Добавить <b>→</b></button>
-            </form>
-          </div>}
+        <div className={`stage-shell ${video ? 'has-video' : ''}`}>
+          {/* The player classes take over this node with imperative DOM
+              calls (container.replaceChildren(...)), which would silently
+              wipe out any React-rendered sibling placed inside it - like the
+              sync badges used to be. Nothing else may render inside `.stage`
+              once a video is loaded; overlays live in `.stage-shell` instead. */}
+          <div className="stage" ref={stage}>
+            {!video && <div className="empty">
+              <div className="play-icon">▶</div>
+              <h1>Смотрите вместе, минута в минуту.</h1>
+              <p>Вставьте ссылку на видео и позовите друзей в комнату.</p>
+              <form className="empty-form" onSubmit={add}>
+                <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" />
+                <button type="submit">Добавить <b>→</b></button>
+              </form>
+            </div>}
+          </div>
           {video && people.length > 0 && <div className="stage-badges">
             {visiblePeople.map(person => {
               const t = extrapolate(person);
@@ -267,7 +274,7 @@ function App() {
         <div className="stage-toolbar">
           <div className="toolbar-notice"><span className={`dot ${connected ? 'on' : ''}`} />{notice}</div>
           <div className="toolbar-actions">
-            <span className="watch-count">{people.length || 1} смотрит{people.length === 1 ? '' : people.length ? 'ят' : ''}</span>
+            <span className="watch-count">{people.length || 1} {people.length === 1 ? 'смотрит' : 'смотрят'}</span>
             <button className="sync-btn" onClick={syncEveryone} disabled={people.length <= 1}><IconRefresh /><span>Синхронизировать</span></button>
           </div>
         </div>

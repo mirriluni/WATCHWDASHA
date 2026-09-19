@@ -42,7 +42,8 @@ button{cursor:pointer}
 
 .room{flex:1;min-height:0;display:flex;gap:14px;padding:0 20px 20px}
 .stage-wrap{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:10px}
-.stage{position:relative;flex:1;min-height:0;background:#000;border-radius:18px;overflow:hidden;display:grid;place-items:center;border:1px solid var(--border)}
+.stage-shell{position:relative;flex:1;min-height:0}
+.stage{position:absolute;inset:0;background:#000;border-radius:18px;overflow:hidden;display:grid;place-items:center;border:1px solid var(--border)}
 .media{width:100%;height:100%;border:0;display:block}
 .empty{text-align:center;max-width:420px;padding:24px;display:flex;flex-direction:column;align-items:center;max-height:100%;overflow-y:auto}
 .play-icon{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;background:#182c40;color:var(--accent);margin-bottom:16px;padding-left:3px;font-size:19px}
@@ -103,8 +104,8 @@ input::placeholder{color:var(--text-faint)}
   .room{flex-direction:column;padding:0 10px 10px;gap:8px;min-height:0}
   .stage-wrap{flex:0 0 auto}
   .stage{border-radius:14px}
-  .stage.has-video{aspect-ratio:16/9;max-height:calc(var(--app-height, 100vh) * 0.38)}
-  .stage:not(.has-video){min-height:280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
+  .stage-shell.has-video{flex:0 0 auto;aspect-ratio:16/9;max-height:calc(var(--app-height, 100vh) * 0.38)}
+  .stage-shell:not(.has-video){flex:0 0 auto;min-height:280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
   .empty{padding:16px;max-width:320px}
   .empty h1{font-size:19px}
   .empty-form{flex-direction:column}
