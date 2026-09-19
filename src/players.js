@@ -23,14 +23,20 @@ export class VkPlayer extends BasePlayer {
   constructor(container, v) {
     super();
     const [ownerId, id] = v.videoId.split('_');
-    // video_ext.php is VK's embeddable player endpoint; a normal video page
-    // is deliberately protected from framing and would only show a blank area.
-    this.root = frame(container, `https://vkvideo.ru/video_ext.php?oid=${encodeURIComponent(ownerId)}&id=${encodeURIComponent(id)}&hd=2&autoplay=0`, 'VK Video');
-    this.root.addEventListener('load', () => this.emit('ready'), { once: true });
-    this.root.addEventListener('error', () => this.emit('error'), { once: true });
+    // js_api=1 enables VK's supported VideoPlayer SDK for this iframe.
+    this.root = frame(container, `https://vkvideo.ru/video_ext.php?oid=${encodeURIComponent(ownerId)}&id=${encodeURIComponent(id)}&hd=2&autoplay=0&js_api=1`, 'VK Video');
+    this.root.allow = 'autoplay; encrypted-media; fullscreen; picture-in-picture; screen-wake-lock';
+    this.ready = Promise.all([vkApi(), new Promise((resolve, reject) => { this.root.addEventListener('load', resolve, { once: true }); this.root.addEventListener('error', reject, { once: true }); })]).then(() => new Promise(resolve => {
+      this.player = window.VK.VideoPlayer(this.root);
+      const relay = event => state => { if (Number.isFinite(state?.time)) this.currentTime = state.time; this.emit(event); };
+      this.player.on('inited', state => { if (Number.isFinite(state?.time)) this.currentTime = state.time; this.emit('ready'); resolve(); });
+      this.player.on('started', relay('playing')); this.player.on('resumed', relay('playing')); this.player.on('paused', relay('paused'));
+      this.player.on('ended', relay('ended')); this.player.on('timeupdate', relay('timeupdate')); this.player.on('error', relay('error'));
+    }));
   }
-  async play(){} async pause(){} async seek(){} async getCurrentTime(){ return 0; } async getDuration(){ return 0; }
+  async play(){ await this.ready; this.player.play(); } async pause(){ await this.ready; this.player.pause(); } async seek(t){ await this.ready; this.player.seek(t); } async getCurrentTime(){ await this.ready; return this.player.getCurrentTime?.() ?? this.currentTime ?? 0; } async getDuration(){ await this.ready; return this.player.getDuration?.() ?? 0; } destroy(){ this.player?.destroy?.(); super.destroy(); }
 }
 const loadScript = src => new Promise((ok, bad) => { if (document.querySelector(`script[src="${src}"]`)) return ok(); const s = document.createElement('script'); s.src = src; s.onload = ok; s.onerror = bad; document.head.append(s); });
 let yt; function youtubeApi() { if (window.YT?.Player) return Promise.resolve(); if (yt) return yt; yt = new Promise(resolve => { window.onYouTubeIframeAPIReady = resolve; loadScript('https://www.youtube.com/iframe_api'); }); return yt; }
+let vk; function vkApi() { if (window.VK?.VideoPlayer) return Promise.resolve(); if (vk) return vk; vk = loadScript('https://vk.com/js/api/videoplayer.js').then(() => new Promise((resolve, reject) => { const started = Date.now(); const check = setInterval(() => { if (window.VK?.VideoPlayer) { clearInterval(check); resolve(); } else if (Date.now() - started > 10000) { clearInterval(check); reject(new Error('VK Video API unavailable')); } }, 50); })); return vk; }
 export const playerFor = { youtube: YouTubePlayer, vimeo: VimeoPlayer, direct: Html5Player, twitch: TwitchPlayer, vk: VkPlayer };

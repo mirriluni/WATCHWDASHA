@@ -6,6 +6,7 @@ import './style.css';
 
 const makeRoom = () => Math.random().toString(36).slice(2, 8);
 const formatTime = value => Number.isFinite(value) ? `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}` : '—';
+const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 class AppErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
@@ -70,7 +71,7 @@ function App() {
     };
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
-      if (!player.current || !['youtube', 'vimeo', 'direct'].includes(currentVideo.current?.provider)) return;
+      if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return;
       send({ type: 'presence', time: await player.current.getCurrentTime() });
     }, 4000);
     return () => { clearInterval(timer); clearInterval(positionTimer); socket.close(); dispose(); };
@@ -78,7 +79,7 @@ function App() {
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); } catch (error) { setNotice(error.message); } };
   const copy = async () => { await navigator.clipboard.writeText(location.href); setNotice('Link copied!'); };
   const syncEveryone = async () => {
-    if (!player.current || !['youtube', 'vimeo', 'direct'].includes(currentVideo.current?.provider)) return setNotice('Exact sync is unavailable for this video');
+    if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return setNotice('Exact sync is unavailable for this video');
     send({ type: 'forceSync', time: await player.current.getCurrentTime() }); setNotice('Synchronizing everyone…');
   };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
@@ -86,7 +87,7 @@ function App() {
     <section className="shell"><div className="stage" ref={stage}>{!video && <div className="empty"><div className="play-icon">▶</div><h1>Bring everyone to the same moment.</h1><p>Paste a video link below and start watching together.</p></div>}</div><div className="status">{notice}</div>
       <div className="people"><div className="avatars">{people.slice(0, 4).map((p, i) => <span key={p.id} style={{ '--n': i }}>{p.name.slice(0, 1).toUpperCase()}</span>)}</div><span>{people.length || 1} watching now</span><div className="names">{people.map(p => p.name).join(' · ')}</div></div>
       <form onSubmit={add}><input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste video URL…" aria-label="Video URL"/><button type="submit">Add video <b>→</b></button></form>
-      <div className="room-tools"><section className="sync-card"><div><small>ROOM SYNC</small><strong>{people.length > 1 ? 'Everyone follows the room timeline' : 'Invite someone to start watching together'}</strong></div><button onClick={syncEveryone}>Sync everyone</button><div className="watchers">{people.map(person => <div className="watcher" key={person.id}><span className="presence-dot"/><b>{person.id === you?.id ? 'You' : person.name}</b><em>{['youtube', 'vimeo', 'direct'].includes(video?.provider) ? `at ${formatTime(person.position)}` : 'position unavailable'}</em></div>)}</div></section>
+      <div className="room-tools"><section className="sync-card"><div><small>ROOM SYNC</small><strong>{people.length > 1 ? 'Everyone follows the room timeline' : 'Invite someone to start watching together'}</strong></div><button onClick={syncEveryone}>Sync everyone</button><div className="watchers">{people.map(person => <div className="watcher" key={person.id}><span className="presence-dot"/><b>{person.id === you?.id ? 'You' : person.name}</b><em>{exactSyncProviders.includes(video?.provider) ? `at ${formatTime(person.position)}` : 'position unavailable'}</em></div>)}</div></section>
         <section className="chat-card"><div className="chat-title">Room chat <span>{messages.length}</span></div><div className="messages">{messages.length ? messages.map(message => <p key={message.id} className={message.authorId === you?.id ? 'mine' : ''}><b>{message.authorId === you?.id ? 'You' : message.author}</b>{message.text}</p>) : <p className="chat-empty">Say hello to the room.</p>}</div><form className="chat-form" onSubmit={submitChat}><input value={chat} onChange={e => setChat(e.target.value)} maxLength="500" placeholder="Write a message…"/><button type="submit">Send</button></form></section>
       </div>
     </section><p className="hint">One room, one video, perfectly in sync.</p></main>;
