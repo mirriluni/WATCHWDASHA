@@ -6,7 +6,7 @@ export class BasePlayer {
   destroy() { this.root?.remove(); }
 }
 export class Html5Player extends BasePlayer {
-  constructor(container, video) { super(); this.root = document.createElement('video'); this.root.controls = true; this.root.playsInline = true; this.root.className = 'media'; this.root.src = video.url; container.replaceChildren(this.root); ['play','pause','ended','timeupdate','error','loadeddata'].forEach(e => this.root.addEventListener(e, () => this.emit(e === 'loadeddata' ? 'ready' : e === 'play' ? 'playing' : e === 'pause' ? 'paused' : e))); }
+  constructor(container, video) { super(); this.root = document.createElement('video'); this.root.controls = true; this.root.playsInline = true; this.root.className = 'media'; this.root.src = video.url; container.replaceChildren(this.root); ['play','pause','ended','timeupdate','seeked','error','loadeddata'].forEach(e => this.root.addEventListener(e, () => this.emit(e === 'loadeddata' ? 'ready' : e === 'play' ? 'playing' : e === 'pause' ? 'paused' : e))); }
   async play() { await this.root.play(); } async pause() { this.root.pause(); } async seek(time) { this.root.currentTime = time; } async getCurrentTime() { return this.root.currentTime || 0; } async getDuration() { return this.root.duration || 0; }
 }
 function frame(container, src, label) { const el = document.createElement('iframe'); el.className = 'media'; el.src = src; el.title = label; el.allow = 'autoplay; fullscreen; picture-in-picture'; el.allowFullscreen = true; container.replaceChildren(el); return el; }

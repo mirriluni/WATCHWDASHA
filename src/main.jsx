@@ -27,10 +27,10 @@ function App() {
   const [url, setUrl] = useState(''); const [video, setVideo] = useState(null);
   const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Paste a link to begin');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
-  const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null);
+  const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null); const lastPoll = useRef(null);
   useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
-  const dispose = useCallback(() => { player.current?.destroy(); player.current = null; }, []);
+  const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
   // Counter (not a boolean) so overlapping async player operations - e.g. an
   // initial "ready" sync still resolving while a periodic correction comes
   // in - can't stomp on each other and prematurely stop suppressing events.
@@ -70,6 +70,11 @@ function App() {
       instance.on('playing', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time }); });
       instance.on('paused', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
       instance.on('ended', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
+      // Scrubbing the timeline doesn't change play/paused state, so it never
+      // reaches the handlers above - and without this, the periodic sync
+      // correction below would snap the video back to the old, un-seeked
+      // position within a few seconds.
+      instance.on('seeked', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { ...playback.current, currentTime: time, updatedAt: Date.now() }; send({ type: 'seek', time }); });
     } catch (error) { console.error('Player creation error:', error); setNotice('Unable to load video'); }
   }, [dispose, send, withSuppressed]);
   const applySync = useCallback(async (data) => {
@@ -104,9 +109,22 @@ function App() {
     };
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
-      if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return;
-      send({ type: 'presence', time: await player.current.getCurrentTime() });
-    }, 4000);
+      if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) { lastPoll.current = null; return; }
+      const time = await player.current.getCurrentTime();
+      send({ type: 'presence', time });
+      // Generic seek detection: YouTube/Vimeo/VK don't reliably fire a
+      // dedicated "seeked" event (especially when scrubbing while paused),
+      // so catch it here by comparing against where playback should be if
+      // nothing but normal time flow had happened. Without this the 8s
+      // periodic sync below would otherwise roll a silent seek back.
+      const prev = lastPoll.current; lastPoll.current = { time, at: Date.now() };
+      if (suppressDepth.current || !prev) return;
+      const expected = prev.time + (playback.current.state === 'playing' ? (Date.now() - prev.at) / 1000 : 0);
+      if (Math.abs(time - expected) > SYNC_DRIFT_THRESHOLD) {
+        playback.current = { ...playback.current, currentTime: time, updatedAt: Date.now() };
+        send({ type: 'seek', time });
+      }
+    }, 1500);
     return () => { clearInterval(timer); clearInterval(positionTimer); socket.close(); dispose(); };
   }, [roomId, load, applySync, dispose, send]);
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); } catch (error) { setNotice(error.message); } };
