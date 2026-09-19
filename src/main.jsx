@@ -7,17 +7,47 @@ import './style.css';
 const makeRoom = () => Math.random().toString(36).slice(2, 8);
 const pad = n => String(n).padStart(2, '0');
 const formatTime = value => { if (!Number.isFinite(value)) return '—'; const total = Math.max(0, Math.floor(value)); return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`; };
+const formatClock = ts => { if (!Number.isFinite(ts)) return ''; const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
+const avatarColor = id => { let hash = 0; for (let i = 0; i < (id || '').length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0; return `hsl(${hash % 360}, 46%, 47%)`; };
 const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 // A drift smaller than this is imperceptible and not worth re-seeking for:
 // re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
 // fires its own "playing" state event and can bounce back through the room.
 const SYNC_DRIFT_THRESHOLD = 1.5;
+const MAX_IMAGE_DATA_URL = 550_000;
+
+const Icon = ({ children }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">{children}</svg>;
+const IconPlus = () => <Icon><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></Icon>;
+const IconLink = () => <Icon><circle cx="7" cy="12" r="3.4" /><circle cx="17" cy="12" r="3.4" /><line x1="10.2" y1="12" x2="13.8" y2="12" /></Icon>;
+const IconImage = () => <Icon><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 15 9 5 19" /></Icon>;
+const IconSend = () => <Icon><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></Icon>;
+const IconRefresh = () => <Icon><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></Icon>;
+
+const compressImage = file => new Promise((resolve, reject) => {
+  const objectUrl = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    URL.revokeObjectURL(objectUrl);
+    let { width, height } = img;
+    const maxSide = 1000;
+    if (width > maxSide || height > maxSide) { const scale = maxSide / Math.max(width, height); width = Math.round(width * scale); height = Math.round(height * scale); }
+    const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
+    canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+    let quality = 0.78; let dataUrl = canvas.toDataURL('image/jpeg', quality);
+    while (dataUrl.length > MAX_IMAGE_DATA_URL && quality > 0.3) { quality -= 0.12; dataUrl = canvas.toDataURL('image/jpeg', quality); }
+    if (dataUrl.length > MAX_IMAGE_DATA_URL) return reject(new Error('Картинка слишком большая, попробуйте другую'));
+    resolve(dataUrl);
+  };
+  img.onerror = () => { URL.revokeObjectURL(objectUrl); reject(new Error('Не удалось прочитать файл')); };
+  img.src = objectUrl;
+});
+
 class AppErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
   componentDidCatch(error) { console.error('WatchTogether interface error:', error); }
   render() {
-    if (this.state.error) return <main><section className="fatal"><div className="play-icon">!</div><h1>Unable to display the room</h1><p>{this.state.error.message || 'Unexpected interface error'}</p><button onClick={() => location.reload()}>Reload room</button></section></main>;
+    if (this.state.error) return <main className="fatal-screen"><section className="fatal"><div className="play-icon">!</div><h1>Не удалось отобразить комнату</h1><p>{this.state.error.message || 'Непредвиденная ошибка интерфейса'}</p><button onClick={() => location.reload()}>Перезагрузить</button></section></main>;
     return this.props.children;
   }
 }
@@ -25,10 +55,19 @@ function App() {
   const initial = location.pathname.match(/^\/room\/([\w-]+)/)?.[1];
   const [roomId] = useState(initial || makeRoom());
   const [url, setUrl] = useState(''); const [video, setVideo] = useState(null);
-  const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Paste a link to begin');
+  const [showAdd, setShowAdd] = useState(false);
+  const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Вставьте ссылку, чтобы начать');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [, setTick] = useState(0);
   const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null); const lastPoll = useRef(null);
+  const fileInput = useRef(); const messagesEnd = useRef();
   useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
+  // Drives the live-ticking time badges: without a heartbeat, a person's
+  // displayed position only updates when a network message happens to
+  // arrive, which looks stuck/jumpy instead of counting seconds smoothly.
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
+  useEffect(() => { messagesEnd.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
   const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
   // Counter (not a boolean) so overlapping async player operations - e.g. an
@@ -40,8 +79,7 @@ function App() {
   // is issued - and then fire their own delayed "playing" state event once
   // buffering finishes. A short grace period after the call keeps that
   // trailing event suppressed too, instead of it looking like a fresh user
-  // action and being echoed straight back into the room (the original
-  // "reloads every millisecond" loop).
+  // action and being echoed straight back into the room.
   const withSuppressed = useCallback(async (fn, graceMs = 800) => {
     suppressDepth.current++;
     try { await fn(); } finally { setTimeout(() => { suppressDepth.current = Math.max(0, suppressDepth.current - 1); }, graceMs); }
@@ -52,13 +90,13 @@ function App() {
     // stage contents with an iframe/video element. Otherwise React can try to
     // remove a node the player has already removed and blank the whole app.
     await new Promise(resolve => requestAnimationFrame(resolve));
-    setNotice('Loading video…');
+    setNotice('Загрузка видео…');
     const Player = playerFor[nextVideo.provider];
-    if (!Player) { setNotice('This video cannot be embedded'); return; }
+    if (!Player) { setNotice('Это видео нельзя встроить'); return; }
     try {
       const instance = new Player(stage.current, nextVideo); player.current = instance;
       instance.on('ready', async () => {
-        setNotice('Video ready');
+        setNotice('Видео готово');
         if (sync) {
           const elapsed = sync.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
           const target = Math.max(0, sync.currentTime + elapsed);
@@ -66,7 +104,7 @@ function App() {
           playback.current = { state: sync.state, currentTime: target, updatedAt: Date.now() };
         }
       });
-      instance.on('error', () => setNotice('Unable to load video'));
+      instance.on('error', () => setNotice('Не удалось загрузить видео'));
       instance.on('playing', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time }); });
       instance.on('paused', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
       instance.on('ended', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
@@ -75,7 +113,7 @@ function App() {
       // correction below would snap the video back to the old, un-seeked
       // position within a few seconds.
       instance.on('seeked', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { ...playback.current, currentTime: time, updatedAt: Date.now() }; send({ type: 'seek', time }); });
-    } catch (error) { console.error('Player creation error:', error); setNotice('Unable to load video'); }
+    } catch (error) { console.error('Player creation error:', error); setNotice('Не удалось загрузить видео'); }
   }, [dispose, send, withSuppressed]);
   const applySync = useCallback(async (data) => {
     if (!player.current || !data.playback) return;
@@ -101,7 +139,7 @@ function App() {
     socket.onmessage = async ({ data }) => { let msg; try { msg = JSON.parse(data); } catch { return; }
       if (msg.type === 'welcome') { setYou(msg.you); setPeople(msg.participants); setMessages(msg.messages || []); if (msg.video) load(msg.video, msg.playback); }
       if (msg.type === 'participants') setPeople(msg.participants);
-      if (msg.type === 'chat') setMessages(current => [...current, msg.message].slice(-50));
+      if (msg.type === 'chat') setMessages(current => [...current, msg.message].slice(-30));
       if (msg.type === 'loadVideo') load(msg.video, msg.playback);
       if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
       if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
@@ -127,20 +165,98 @@ function App() {
     }, 1500);
     return () => { clearInterval(timer); clearInterval(positionTimer); socket.close(); dispose(); };
   }, [roomId, load, applySync, dispose, send]);
-  const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); } catch (error) { setNotice(error.message); } };
-  const copy = async () => { await navigator.clipboard.writeText(location.href); setNotice('Link copied!'); };
+  const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { setNotice(error.message); } };
+  const onUrlKeyDown = e => { if (e.key === 'Enter') add(e); };
+  const copy = async () => { await navigator.clipboard.writeText(location.href); setNotice('Ссылка скопирована!'); };
   const syncEveryone = async () => {
-    if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return setNotice('Exact sync is unavailable for this video');
-    send({ type: 'forceSync', time: await player.current.getCurrentTime() }); setNotice('Synchronizing everyone…');
+    if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return setNotice('Точная синхронизация недоступна для этого видео');
+    send({ type: 'forceSync', time: await player.current.getCurrentTime() }); setNotice('Синхронизируем всех…');
   };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
-  return <main><header><a className="brand" href="/">watch<span>together</span></a><div className="room-state"><i className={connected ? 'on' : ''}/>{connected ? 'Live room' : 'Reconnecting…'}</div><button className="copy" onClick={copy}>Copy room link</button></header>
-    <section className="shell"><div className="stage" ref={stage}>{!video && <div className="empty"><div className="play-icon">▶</div><h1>Bring everyone to the same moment.</h1><p>Paste a video link below and start watching together.</p></div>}</div><div className="status">{notice}</div>
-      <div className="people"><div className="avatars">{people.slice(0, 4).map((p, i) => <span key={p.id} style={{ '--n': i }}>{p.name.slice(0, 1).toUpperCase()}</span>)}</div><span>{people.length || 1} watching now</span><div className="names">{people.map(p => p.name).join(' · ')}</div></div>
-      <form onSubmit={add}><input value={url} onChange={e => setUrl(e.target.value)} placeholder="Paste video URL…" aria-label="Video URL"/><button type="submit">Add video <b>→</b></button></form>
-      <div className="room-tools"><section className="sync-card"><div><small>ROOM SYNC</small><strong>{people.length > 1 ? 'Everyone follows the room timeline' : 'Invite someone to start watching together'}</strong></div><button onClick={syncEveryone}>Sync everyone</button><div className="watchers">{people.map(person => <div className="watcher" key={person.id}><span className="presence-dot"/><b>{person.id === you?.id ? 'You' : person.name}</b><em>{exactSyncProviders.includes(video?.provider) ? `at ${formatTime(person.position)}` : 'position unavailable'}</em></div>)}</div></section>
-        <section className="chat-card"><div className="chat-title">Room chat <span>{messages.length}</span></div><div className="messages">{messages.length ? messages.map(message => <p key={message.id} className={message.authorId === you?.id ? 'mine' : ''}><b>{message.authorId === you?.id ? 'You' : message.author}</b>{message.text}</p>) : <p className="chat-empty">Say hello to the room.</p>}</div><form className="chat-form" onSubmit={submitChat}><input value={chat} onChange={e => setChat(e.target.value)} maxLength="500" placeholder="Write a message…"/><button type="submit">Send</button></form></section>
+  const onChatKeyDown = e => { if (e.key === 'Enter' && !e.shiftKey) submitChat(e); };
+  const sendImageFile = useCallback(async file => {
+    if (!file || !file.type?.startsWith('image/')) return;
+    setImageBusy(true);
+    try { const dataUrl = await compressImage(file); send({ type: 'chat', image: dataUrl }); }
+    catch (error) { setNotice(error.message || 'Не удалось отправить картинку'); }
+    finally { setImageBusy(false); }
+  }, [send]);
+  const onPickImage = e => { const file = e.target.files?.[0]; e.target.value = ''; sendImageFile(file); };
+  const onPasteChat = e => { const file = [...(e.clipboardData?.files || [])].find(f => f.type?.startsWith('image/')); if (file) { e.preventDefault(); sendImageFile(file); } };
+  const extrapolate = person => {
+    if (!person || !Number.isFinite(person.position)) return null;
+    const elapsed = playback.current.state === 'playing' && person.positionUpdatedAt ? Math.max(0, (Date.now() - person.positionUpdatedAt) / 1000) : 0;
+    return person.position + elapsed;
+  };
+  const timeKnown = exactSyncProviders.includes(video?.provider);
+  const yourTime = extrapolate(people.find(p => p.id === you?.id));
+  const visiblePeople = people.slice(0, 5);
+  const overflow = Math.max(0, people.length - visiblePeople.length);
+  return <div className="app">
+    <header className="topbar">
+      <a className="brand" href="/">watch<span>together</span></a>
+      <div className={`status-pill ${connected ? 'on' : ''}`}><i /><span>{connected ? 'В сети' : 'Переподключение…'}</span></div>
+      <div className="topbar-actions">
+        {video && <button className="icon-btn" onClick={() => setShowAdd(v => !v)} title="Добавить видео" aria-label="Добавить видео"><IconPlus /></button>}
+        <button className="icon-btn" onClick={copy} title="Скопировать ссылку на комнату" aria-label="Скопировать ссылку"><IconLink /></button>
       </div>
-    </section><p className="hint">One room, one video, perfectly in sync.</p></main>;
+    </header>
+    {showAdd && <form className="add-video-bar" onSubmit={add}>
+      <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" autoFocus />
+      <button type="submit">Добавить</button>
+    </form>}
+    <div className="room">
+      <div className="stage-wrap">
+        <div className={`stage ${video ? 'has-video' : ''}`} ref={stage}>
+          {!video && <div className="empty">
+            <div className="play-icon">▶</div>
+            <h1>Смотрите вместе, минута в минуту.</h1>
+            <p>Вставьте ссылку на видео и позовите друзей в комнату.</p>
+            <form className="empty-form" onSubmit={add}>
+              <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" />
+              <button type="submit">Добавить <b>→</b></button>
+            </form>
+          </div>}
+          {video && people.length > 0 && <div className="stage-badges">
+            {visiblePeople.map(person => {
+              const t = extrapolate(person);
+              const isYou = person.id === you?.id;
+              const drift = !isYou && Number.isFinite(t) && Number.isFinite(yourTime) ? Math.abs(t - yourTime) : null;
+              const state = isYou ? 'me' : drift === null ? '' : drift > SYNC_DRIFT_THRESHOLD ? 'drift' : 'synced';
+              return <div className={`badge ${state}`} key={person.id} title={isYou ? 'Вы' : person.name}>
+                <span className="badge-avatar" style={{ background: avatarColor(person.id) }}>{person.name.slice(0, 1).toUpperCase()}</span>
+                {timeKnown && <span className="badge-time">{formatTime(t)}</span>}
+              </div>;
+            })}
+            {overflow > 0 && <div className="badge more">+{overflow}</div>}
+          </div>}
+        </div>
+        <div className="stage-toolbar">
+          <div className="toolbar-notice"><span className={`dot ${connected ? 'on' : ''}`} />{notice}</div>
+          <div className="toolbar-actions">
+            <span className="watch-count">{people.length || 1} смотрит{people.length === 1 ? '' : people.length ? 'ят' : ''}</span>
+            <button className="sync-btn" onClick={syncEveryone} disabled={people.length <= 1}><IconRefresh /><span>Синхронизировать</span></button>
+          </div>
+        </div>
+      </div>
+      <aside className="chat-pane">
+        <div className="chat-header">Чат комнаты <span>{messages.length}</span></div>
+        <div className="messages">
+          {messages.length ? messages.map(message => <div key={message.id} className={`msg ${message.authorId === you?.id ? 'mine' : ''}`}>
+            <div className="msg-meta"><b style={{ color: avatarColor(message.authorId) }}>{message.authorId === you?.id ? 'Вы' : message.author}</b><time>{formatClock(message.timestamp)}</time></div>
+            {message.image && <img className="msg-image" src={message.image} alt="Скриншот из чата" onClick={() => window.open(message.image, '_blank')} />}
+            {message.text && <p>{message.text}</p>}
+          </div>) : <p className="chat-empty">Скажите привет в комнате.</p>}
+          <div ref={messagesEnd} />
+        </div>
+        <form className="chat-form" onSubmit={submitChat}>
+          <input type="file" accept="image/*" ref={fileInput} hidden onChange={onPickImage} />
+          <button type="button" className="attach-btn" onClick={() => fileInput.current?.click()} disabled={imageBusy} title="Отправить изображение" aria-label="Отправить изображение"><IconImage /></button>
+          <input value={chat} onChange={e => setChat(e.target.value)} onPaste={onPasteChat} onKeyDown={onChatKeyDown} maxLength="500" placeholder="Написать сообщение…" aria-label="Сообщение" />
+          <button type="submit" className="send-btn" aria-label="Отправить"><IconSend /></button>
+        </form>
+      </aside>
+    </div>
+  </div>;
 }
 createRoot(document.getElementById('root')).render(<AppErrorBoundary><App/></AppErrorBoundary>);

@@ -38,10 +38,15 @@ wss.on('connection', (ws, request) => {
     let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (!msg || typeof msg.type !== 'string') return;
     if (msg.type === 'setName' && typeof msg.name === 'string') { user.name = msg.name.trim().slice(0, 24) || user.name; return sendRoster(r); }
-    if (msg.type === 'chat' && typeof msg.text === 'string') {
-      const text = msg.text.trim().slice(0, 500); if (!text) return;
-      const message = { id: randomUUID(), authorId: user.id, author: user.name, text, timestamp: now() };
-      r.messages.push(message); if (r.messages.length > 50) r.messages.shift(); emit(r, { type: 'chat', message }); return;
+    if (msg.type === 'chat' && (typeof msg.text === 'string' || typeof msg.image === 'string')) {
+      const text = typeof msg.text === 'string' ? msg.text.trim().slice(0, 500) : '';
+      // Images travel as compressed data: URLs from the client; cap the
+      // encoded size so a handful of screenshots can't blow up the room's
+      // in-memory history (there is no persistent storage, by design).
+      const image = typeof msg.image === 'string' && msg.image.startsWith('data:image/') && msg.image.length <= 600_000 ? msg.image : null;
+      if (!text && !image) return;
+      const message = { id: randomUUID(), authorId: user.id, author: user.name, text, image, timestamp: now() };
+      r.messages.push(message); if (r.messages.length > 30) r.messages.shift(); emit(r, { type: 'chat', message }); return;
     }
     if (msg.type === 'presence') {
       const time = Number(msg.time); if (!Number.isFinite(time) || time < 0 || time > 172800) return;
