@@ -5,8 +5,13 @@ import { playerFor } from './players.js';
 import './style.css';
 
 const makeRoom = () => Math.random().toString(36).slice(2, 8);
-const formatTime = value => Number.isFinite(value) ? `${Math.floor(value / 60)}:${String(Math.floor(value % 60)).padStart(2, '0')}` : '—';
+const pad = n => String(n).padStart(2, '0');
+const formatTime = value => { if (!Number.isFinite(value)) return '—'; const total = Math.max(0, Math.floor(value)); return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`; };
 const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
+// A drift smaller than this is imperceptible and not worth re-seeking for:
+// re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
+// fires its own "playing" state event and can bounce back through the room.
+const SYNC_DRIFT_THRESHOLD = 1.5;
 class AppErrorBoundary extends Component {
   constructor(props) { super(props); this.state = { error: null }; }
   static getDerivedStateFromError(error) { return { error }; }
@@ -22,10 +27,25 @@ function App() {
   const [url, setUrl] = useState(''); const [video, setVideo] = useState(null);
   const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Paste a link to begin');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
-  const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppress = useRef(false); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null);
+  const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null);
   useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
   const dispose = useCallback(() => { player.current?.destroy(); player.current = null; }, []);
+  // Counter (not a boolean) so overlapping async player operations - e.g. an
+  // initial "ready" sync still resolving while a periodic correction comes
+  // in - can't stomp on each other and prematurely stop suppressing events.
+  // try/finally guarantees it's released even if seek/play throws. The
+  // iframe providers (YouTube/VK) don't resolve seek()/play() when the
+  // player is actually done buffering - they resolve as soon as the command
+  // is issued - and then fire their own delayed "playing" state event once
+  // buffering finishes. A short grace period after the call keeps that
+  // trailing event suppressed too, instead of it looking like a fresh user
+  // action and being echoed straight back into the room (the original
+  // "reloads every millisecond" loop).
+  const withSuppressed = useCallback(async (fn, graceMs = 800) => {
+    suppressDepth.current++;
+    try { await fn(); } finally { setTimeout(() => { suppressDepth.current = Math.max(0, suppressDepth.current - 1); }, graceMs); }
+  }, []);
   const load = useCallback(async (nextVideo, sync) => {
     dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); if (!nextVideo) return;
     // Let React remove its empty-state child before a provider replaces the
@@ -41,19 +61,32 @@ function App() {
         setNotice('Video ready');
         if (sync) {
           const elapsed = sync.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
-          suppress.current = true; await instance.seek(Math.max(0, sync.currentTime + elapsed)); if (sync.state === 'playing') await instance.play(); suppress.current = false;
+          const target = Math.max(0, sync.currentTime + elapsed);
+          await withSuppressed(async () => { await instance.seek(target); if (sync.state === 'playing') await instance.play(); });
+          playback.current = { state: sync.state, currentTime: target, updatedAt: Date.now() };
         }
       });
       instance.on('error', () => setNotice('Unable to load video'));
-      instance.on('playing', async () => { if (!suppress.current) send({ type: 'play', time: await instance.getCurrentTime() }); });
-      instance.on('paused', async () => { if (!suppress.current) send({ type: 'pause', time: await instance.getCurrentTime() }); });
-      instance.on('ended', async () => { if (!suppress.current) send({ type: 'ended', time: await instance.getCurrentTime() }); });
+      instance.on('playing', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time }); });
+      instance.on('paused', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
+      instance.on('ended', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
     } catch (error) { console.error('Player creation error:', error); setNotice('Unable to load video'); }
-  }, [dispose, send]);
+  }, [dispose, send, withSuppressed]);
   const applySync = useCallback(async (data) => {
-    if (!player.current) return; playback.current = data.playback; const p = player.current; const elapsed = data.playback?.state === 'playing' ? (Date.now() - data.playback.updatedAt) / 1000 : 0; const target = data.playback?.currentTime + elapsed;
-    suppress.current = true; await p.seek(Math.max(0, target)); if (data.playback?.state === 'playing') await p.play(); else await p.pause(); suppress.current = false;
-  }, []);
+    if (!player.current || !data.playback) return;
+    const p = player.current;
+    const elapsed = data.playback.state === 'playing' ? (Date.now() - data.playback.updatedAt) / 1000 : 0;
+    const target = Math.max(0, data.playback.currentTime + elapsed);
+    playback.current = data.playback;
+    await withSuppressed(async () => {
+      // Only re-seek when the drift is actually noticeable: seeking an
+      // iframe player (YouTube/VK) forces a rebuffer every time, which is
+      // the main source of the constant stutter/reload behavior.
+      const current = await p.getCurrentTime();
+      if (Math.abs(current - target) > SYNC_DRIFT_THRESHOLD) await p.seek(target);
+      if (data.playback.state === 'playing') await p.play(); else await p.pause();
+    });
+  }, [withSuppressed]);
   useEffect(() => {
     // Vite runs on 5173 in development while the realtime server runs on 3001.
     // In a production build both share the same origin and port.

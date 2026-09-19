@@ -57,13 +57,18 @@ wss.on('connection', (ws, request) => {
     if (msg.type === 'forceSync') {
       const time = Number(msg.time); if (!Number.isFinite(time) || time < 0 || time > 172800) return;
       r.playback.currentTime = time; r.playback.updatedAt = now(); user.position = time; user.positionUpdatedAt = now();
-      emit(r, { type: 'sync', video: r.video, playback: { ...r.playback }, serverTime: now(), by: user.id }); sendRoster(r); return;
+      // Don't echo back to the sender: it is already at this position, and
+      // re-applying the seek on an iframe player (YouTube/VK) re-triggers a
+      // buffering "playing" state change, which would bounce right back here.
+      emit(r, { type: 'sync', video: r.video, playback: { ...r.playback }, serverTime: now(), by: user.id }, ws); sendRoster(r); return;
     }
     const time = Number(msg.time); if (!Number.isFinite(time) || time < 0 || time > 172800) return;
     user.position = time; user.positionUpdatedAt = now();
     r.playback = { state: msg.type === 'play' ? 'playing' : msg.type === 'ended' ? 'paused' : r.playback.state, currentTime: time, updatedAt: now() };
     if (msg.type === 'pause') r.playback.state = 'paused';
-    emit(r, { type: msg.type, time, timestamp: r.playback.updatedAt, by: user.id }); sendRoster(r);
+    // Same reasoning as forceSync above: exclude the sender to avoid a
+    // self-feedback loop of seek -> buffering -> state event -> seek ...
+    emit(r, { type: msg.type, time, timestamp: r.playback.updatedAt, by: user.id }, ws); sendRoster(r);
   });
   ws.on('close', () => { r.clients.delete(ws); sendRoster(r); if (!r.clients.size) setTimeout(() => !r.clients.size && rooms.delete(roomId), 60 * 60 * 1000); });
 });
