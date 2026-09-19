@@ -1,18 +1,19 @@
 @import url('https://fonts.googleapis.com/css2?family=DM+Mono&family=Manrope:wght@400;500;600;700;800&display=swap');
 :root{
-  --bg:#0a0d0c;
-  --panel:#121815;
-  --panel-2:#171d1a;
+  --bg:#0a0d0f;
+  --panel:#121619;
+  --panel-2:#171c20;
   --border:#ffffff17;
-  --text:#eef4ef;
-  --text-dim:#93a49b;
-  --text-faint:#5c6b62;
-  --accent:#7ee29c;
-  --accent-ink:#062712;
+  --text:#eef2f4;
+  --text-dim:#93a1a9;
+  --text-faint:#5c6870;
+  --accent:#7cb3f0;
+  --accent-ink:#052240;
   --danger:#ff8a80;
+  --app-height:100vh;
 }
 *{box-sizing:border-box}
-html,body,#root{height:100%}
+html,body,#root{height:100%;overflow:hidden}
 body{margin:0;background:var(--bg);color:var(--text);font-family:Manrope,Arial,sans-serif;overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
 input,button{font-family:inherit}
 button{cursor:pointer}
@@ -22,15 +23,15 @@ button{cursor:pointer}
 .fatal .play-icon{margin:0 auto 16px}
 .fatal button{margin-top:16px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:11px 20px}
 
-.app{display:flex;flex-direction:column;height:100vh;height:100dvh;max-width:1480px;margin:0 auto;position:relative}
-.app:before{content:"";position:fixed;inset:-30%;background:radial-gradient(circle at 15% 15%,#1c3a2c 0,transparent 26%),radial-gradient(circle at 90% 80%,#1f1a3a 0,transparent 26%);opacity:.5;pointer-events:none;z-index:-1}
+.app{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:1480px;height:100vh;height:100dvh;height:var(--app-height);display:flex;flex-direction:column}
+.app:before{content:"";position:fixed;inset:-30%;background:radial-gradient(circle at 15% 15%,#1c2c3f 0,transparent 26%),radial-gradient(circle at 90% 80%,#1f1a3a 0,transparent 26%);opacity:.5;pointer-events:none;z-index:-1}
 
 .topbar{display:flex;align-items:center;gap:16px;padding:calc(14px + env(safe-area-inset-top)) 20px 14px;flex:0 0 auto}
 .brand{font-size:19px;letter-spacing:-.8px;text-decoration:none;color:var(--text);font-weight:800}
 .brand span{color:var(--accent)}
 .status-pill{display:flex;align-items:center;gap:7px;font:12px 'DM Mono',monospace;color:var(--text-dim);white-space:nowrap}
 .status-pill i{width:7px;height:7px;border-radius:50%;background:#5c6b62;display:block}
-.status-pill.on i{background:var(--accent);box-shadow:0 0 0 4px rgba(126,226,156,.18)}
+.status-pill.on i{background:var(--accent);box-shadow:0 0 0 4px rgba(124,179,240,.18)}
 .topbar-actions{margin-left:auto;display:flex;gap:8px}
 .icon-btn{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);background:var(--panel);color:var(--text);display:grid;place-items:center;transition:.15s}
 .icon-btn:hover{background:var(--panel-2);border-color:#ffffff2c}
@@ -44,7 +45,7 @@ button{cursor:pointer}
 .stage{position:relative;flex:1;min-height:0;background:#000;border-radius:18px;overflow:hidden;display:grid;place-items:center;border:1px solid var(--border)}
 .media{width:100%;height:100%;border:0;display:block}
 .empty{text-align:center;max-width:420px;padding:24px;display:flex;flex-direction:column;align-items:center;max-height:100%;overflow-y:auto}
-.play-icon{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;background:#1c3a2c;color:var(--accent);margin-bottom:16px;padding-left:3px;font-size:19px}
+.play-icon{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;background:#182c40;color:var(--accent);margin-bottom:16px;padding-left:3px;font-size:19px}
 .empty h1{font-size:23px;letter-spacing:-.6px;margin:0 0 8px;line-height:1.2}
 .empty p{color:var(--text-dim);font-size:13px;margin:0 0 20px}
 .empty-form{display:flex;gap:8px;width:100%}
@@ -54,15 +55,15 @@ button{cursor:pointer}
 .stage-badges{position:absolute;top:12px;right:12px;left:12px;display:flex;gap:6px;z-index:5;flex-wrap:wrap;justify-content:flex-end;pointer-events:none}
 .badge{display:flex;align-items:center;gap:7px;background:rgba(9,13,11,.74);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px 11px 4px 4px;font:11px 'DM Mono',monospace;color:#e2efe7;pointer-events:auto}
 .badge-avatar{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:700 10px Manrope;color:#fff;flex:0 0 auto}
-.badge.me{border-color:rgba(126,226,156,.65)}
-.badge.synced{border-color:rgba(126,226,156,.4)}
+.badge.me{border-color:rgba(124,179,240,.7)}
+.badge.synced{border-color:rgba(124,179,240,.45)}
 .badge.drift{border-color:rgba(255,138,128,.6);color:#ffd9d5}
 .badge.more{color:var(--text-dim);padding:4px 11px}
 
 .stage-toolbar{display:flex;align-items:center;gap:14px;flex:0 0 auto}
 .toolbar-notice{display:flex;align-items:center;gap:8px;color:var(--text-dim);font:12px 'DM Mono',monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
 .dot{width:7px;height:7px;border-radius:50%;background:#5c6b62;flex:0 0 auto}
-.dot.on{background:var(--accent);box-shadow:0 0 0 4px rgba(126,226,156,.15)}
+.dot.on{background:var(--accent);box-shadow:0 0 0 4px rgba(124,179,240,.15)}
 .toolbar-actions{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}
 .watch-count{color:var(--text-faint);font:11px 'DM Mono',monospace;white-space:nowrap}
 .sync-btn{display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);font:600 12px Manrope;padding:9px 13px;border-radius:11px;white-space:nowrap}
@@ -81,7 +82,7 @@ button{cursor:pointer}
 .msg-meta b{font-weight:700}
 .msg-meta time{color:var(--text-faint);font:10px 'DM Mono',monospace}
 .msg p{margin:0;padding:9px 12px;background:var(--panel-2);border-radius:14px;font-size:13px;line-height:1.42;color:#dbe6df;white-space:pre-wrap;word-break:break-word}
-.msg.mine p{background:#1d4a34;color:#e8fff0}
+.msg.mine p{background:#1d3a4a;color:#e8f4ff}
 .msg-image{max-width:220px;max-height:260px;border-radius:12px;display:block;margin-bottom:4px;cursor:zoom-in;border:1px solid var(--border);object-fit:cover}
 .chat-empty{color:var(--text-faint)!important;font-size:13px;text-align:center;margin:auto}
 .chat-form{flex:0 0 auto;display:flex;gap:8px;padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--border)}
@@ -91,7 +92,7 @@ button{cursor:pointer}
 .chat-form input{flex:1;min-width:0}
 
 input{border:1px solid var(--border);border-radius:11px;background:#0f1411;color:var(--text);padding:0 14px;height:38px;font-size:13px;outline:none}
-input:focus{border-color:rgba(126,226,156,.55)}
+input:focus{border-color:rgba(124,179,240,.6)}
 input::placeholder{color:var(--text-faint)}
 
 @media(max-width:860px){
@@ -102,15 +103,15 @@ input::placeholder{color:var(--text-faint)}
   .room{flex-direction:column;padding:0 10px 10px;gap:8px;min-height:0}
   .stage-wrap{flex:0 0 auto}
   .stage{border-radius:14px}
-  .stage.has-video{aspect-ratio:16/9;max-height:38dvh}
-  .stage:not(.has-video){min-height:300px;max-height:62dvh}
+  .stage.has-video{aspect-ratio:16/9;max-height:calc(var(--app-height, 100vh) * 0.38)}
+  .stage:not(.has-video){min-height:280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
   .empty{padding:16px;max-width:320px}
   .empty h1{font-size:19px}
   .empty-form{flex-direction:column}
   .chat-pane{flex:1 1 auto;min-height:0;border-radius:14px}
   .stage-badges{top:8px;right:8px;left:8px}
-  .badge-time{display:none}
-  .badge.me .badge-time{display:inline}
+  .badge{padding:3px 9px 3px 3px;font-size:10px;gap:5px}
+  .badge-avatar{width:19px;height:19px;font-size:9px}
   .stage-toolbar{flex-wrap:wrap;row-gap:6px}
   input,.chat-form input{font-size:16px}
 }

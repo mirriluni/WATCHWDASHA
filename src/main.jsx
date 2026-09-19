@@ -61,13 +61,43 @@ function App() {
   const [imageBusy, setImageBusy] = useState(false);
   const [, setTick] = useState(0);
   const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null); const lastPoll = useRef(null);
-  const fileInput = useRef(); const messagesEnd = useRef();
+  const fileInput = useRef(); const messagesEnd = useRef(); const noticeTimer = useRef();
+  // Transient status messages (link copied, sync triggered, errors) used to
+  // just sit in the toolbar forever because nothing ever reset them. This
+  // shows the message, then settles back to the ambient player status after
+  // a few seconds instead of getting stuck.
+  const flashNotice = useCallback((text, ms = 2500) => {
+    setNotice(text);
+    clearTimeout(noticeTimer.current);
+    noticeTimer.current = setTimeout(() => setNotice(video ? 'Видео готово' : 'Вставьте ссылку, чтобы начать'), ms);
+  }, [video]);
+  useEffect(() => () => clearTimeout(noticeTimer.current), []);
+  // Read via a ref inside the socket effect below so a fresh flashNotice
+  // (it changes whenever `video` does) never forces that effect to
+  // reconnect the websocket - only [roomId, load, applySync, dispose, send]
+  // should ever do that.
+  const flashNoticeRef = useRef(flashNotice);
+  useEffect(() => { flashNoticeRef.current = flashNotice; }, [flashNotice]);
   useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
   // Drives the live-ticking time badges: without a heartbeat, a person's
   // displayed position only updates when a network message happens to
   // arrive, which looks stuck/jumpy instead of counting seconds smoothly.
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
   useEffect(() => { messagesEnd.current?.scrollIntoView({ block: 'end' }); }, [messages.length]);
+  // Mobile browsers don't shrink `100dvh` consistently when the on-screen
+  // keyboard opens (support varies a lot by browser/webview), so the page
+  // used to grow taller than the visible area and get auto-scrolled to keep
+  // the focused chat input visible - pushing the video off-screen. Tracking
+  // the real visual viewport height in JS and feeding it back as a CSS
+  // variable keeps the whole app pinned to exactly what's actually visible.
+  useEffect(() => {
+    const vv = window.visualViewport;
+    const setAppHeight = () => document.documentElement.style.setProperty('--app-height', `${(vv?.height ?? window.innerHeight)}px`);
+    setAppHeight();
+    vv?.addEventListener('resize', setAppHeight);
+    window.addEventListener('resize', setAppHeight);
+    return () => { vv?.removeEventListener('resize', setAppHeight); window.removeEventListener('resize', setAppHeight); };
+  }, []);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
   const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
   // Counter (not a boolean) so overlapping async player operations - e.g. an
@@ -143,7 +173,7 @@ function App() {
       if (msg.type === 'loadVideo') load(msg.video, msg.playback);
       if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
       if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
-      if (msg.type === 'error') setNotice(msg.message);
+      if (msg.type === 'error') flashNoticeRef.current(msg.message);
     };
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
@@ -165,12 +195,15 @@ function App() {
     }, 1500);
     return () => { clearInterval(timer); clearInterval(positionTimer); socket.close(); dispose(); };
   }, [roomId, load, applySync, dispose, send]);
-  const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { setNotice(error.message); } };
+  const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
   const onUrlKeyDown = e => { if (e.key === 'Enter') add(e); };
-  const copy = async () => { await navigator.clipboard.writeText(location.href); setNotice('Ссылка скопирована!'); };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(location.href); flashNotice('Ссылка скопирована!'); }
+    catch { flashNotice('Не удалось скопировать ссылку'); }
+  };
   const syncEveryone = async () => {
-    if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return setNotice('Точная синхронизация недоступна для этого видео');
-    send({ type: 'forceSync', time: await player.current.getCurrentTime() }); setNotice('Синхронизируем всех…');
+    if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return flashNotice('Точная синхронизация недоступна для этого видео');
+    send({ type: 'forceSync', time: await player.current.getCurrentTime() }); flashNotice('Синхронизируем всех…', 2000);
   };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
   const onChatKeyDown = e => { if (e.key === 'Enter' && !e.shiftKey) submitChat(e); };
@@ -178,9 +211,9 @@ function App() {
     if (!file || !file.type?.startsWith('image/')) return;
     setImageBusy(true);
     try { const dataUrl = await compressImage(file); send({ type: 'chat', image: dataUrl }); }
-    catch (error) { setNotice(error.message || 'Не удалось отправить картинку'); }
+    catch (error) { flashNotice(error.message || 'Не удалось отправить картинку'); }
     finally { setImageBusy(false); }
-  }, [send]);
+  }, [send, flashNotice]);
   const onPickImage = e => { const file = e.target.files?.[0]; e.target.value = ''; sendImageFile(file); };
   const onPasteChat = e => { const file = [...(e.clipboardData?.files || [])].find(f => f.type?.startsWith('image/')); if (file) { e.preventDefault(); sendImageFile(file); } };
   const extrapolate = person => {
