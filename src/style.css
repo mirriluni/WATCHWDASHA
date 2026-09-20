@@ -63,13 +63,16 @@ button{cursor:pointer}
 .room{flex:1;min-height:0;display:flex;gap:14px;padding:0 20px 20px}
 .stage-wrap{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:10px}
 .stage-shell{position:relative;flex:1;min-height:0}
-.stage{position:absolute;inset:0;background:#000;border-radius:18px;overflow:hidden;display:grid;place-items:center;border:1px solid var(--border)}
+.stage{position:absolute;inset:0;background:#000;border-radius:18px;overflow:hidden;border:1px solid var(--border)}
 .media{width:100%;height:100%;border:0;display:block}
-.empty{text-align:center;max-width:420px;padding:24px;display:flex;flex-direction:column;align-items:center;max-height:100%;overflow-y:auto}
+/* Sibling of `.stage`, not a child (see the comment in main.jsx) - absolute
+   + inset:0 + flex centering reproduces the old centered-inside-the-video-box
+   look without React ever touching `.stage`'s own children. */
+.empty{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:24px;overflow-y:auto}
 .play-icon{width:54px;height:54px;border-radius:16px;display:grid;place-items:center;background:#182c40;color:var(--accent);margin-bottom:16px;padding-left:3px;font-size:19px}
-.empty h1{font-size:23px;letter-spacing:-.6px;margin:0 0 8px;line-height:1.2}
-.empty p{color:var(--text-dim);font-size:13px;margin:0 0 20px}
-.empty-form{display:flex;gap:8px;width:100%}
+.empty h1{font-size:23px;letter-spacing:-.6px;margin:0 0 8px;line-height:1.2;max-width:420px}
+.empty p{color:var(--text-dim);font-size:13px;margin:0 0 20px;max-width:420px}
+.empty-form{display:flex;gap:8px;width:100%;max-width:420px}
 .empty-form input{flex:1}
 .empty-form button{border:0;border-radius:11px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:0 16px;white-space:nowrap;display:flex;align-items:center;gap:4px}
 
@@ -150,7 +153,7 @@ input::placeholder{color:var(--text-faint)}
      .messages, instead of rigidly holding 280px and squeezing the chat
      input out of the (clipped) chat-pane entirely. */
   .stage-shell:not(.has-video){flex:0 1 280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
-  .empty{padding:16px;max-width:320px}
+  .empty{padding:16px}
   .empty h1{font-size:19px}
   .empty-form{flex-direction:column}
   /* Safety net on top of the flex fixes above: if some combination of

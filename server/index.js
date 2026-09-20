@@ -58,6 +58,15 @@ setInterval(() => {
   addWatchSeconds(accountSeconds, pairSeconds);
 }, WATCH_TICK_MS);
 
+// A phone that drops off Wi-Fi, switches to cellular, or has a VPN blip
+// often never sends a TCP FIN - the connection just goes silent. Without
+// this, the server keeps believing that person is still in the room for
+// however long the OS takes to notice (minutes, sometimes never), showing
+// a ghost participant next to the one real reconnected copy of them and
+// leaving stale state that never advances. `ws` clients answer WebSocket
+// ping frames with a pong automatically (no browser-side code needed);
+// anyone who hasn't in two heartbeats gets forcibly dropped.
+const HEARTBEAT_MS = 30000;
 wss.on('connection', async (ws, request) => {
   const params = new URL(request.url, 'http://localhost').searchParams;
   const roomId = params.get('room');
@@ -70,6 +79,8 @@ wss.on('connection', async (ws, request) => {
   const r = room(roomId);
   const user = { id: randomUUID(), accountId: session.accountId, name: session.username, position: null, positionUpdatedAt: null };
   r.clients.set(ws, user);
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
   ws.send(JSON.stringify({ type: 'welcome', you: user, video: r.video, playback: { ...r.playback, currentTime: actualTime(r), updatedAt: now() }, participants: participants(r), messages: r.messages, serverTime: now() }));
   sendRoster(r);
   ws.on('message', raw => {
@@ -115,3 +126,10 @@ wss.on('connection', async (ws, request) => {
   });
   ws.on('close', () => { r.clients.delete(ws); sendRoster(r); if (!r.clients.size) setTimeout(() => !r.clients.size && rooms.delete(roomId), 60 * 60 * 1000); });
 });
+setInterval(() => {
+  for (const ws of wss.clients) {
+    if (ws.isAlive === false) { ws.terminate(); continue; }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, HEARTBEAT_MS);

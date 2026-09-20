@@ -194,7 +194,10 @@ function Room({ account, onLogout }) {
     };
   }, []);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
-  const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
+  const dispose = useCallback(() => {
+    try { player.current?.destroy(); } catch (error) { console.error('Player destroy error:', error); }
+    player.current = null; lastPoll.current = null;
+  }, []);
   // Counter (not a boolean) so overlapping async player operations - e.g. an
   // initial "ready" sync still resolving while a periodic correction comes
   // in - can't stomp on each other and prematurely stop suppressing events.
@@ -209,17 +212,33 @@ function Room({ account, onLogout }) {
     suppressDepth.current++;
     try { await fn(); } finally { setTimeout(() => { suppressDepth.current = Math.max(0, suppressDepth.current - 1); }, graceMs); }
   }, []);
+  // A flaky connection (mobile data, VPN) reconnects a lot, and every
+  // reconnect gets a fresh "welcome" that calls load() again. If a new
+  // load() starts while an older one is still in its startup `await`, both
+  // would end up racing to build a player into the same `stage.current`
+  // node - a real source of the "loads for one person but not the other"
+  // and inconsistent-state reports. Each call gets a generation number and
+  // bails as soon as it notices a newer one has taken over.
+  const loadGen = useRef(0);
   const load = useCallback(async (nextVideo, sync) => {
+    const gen = ++loadGen.current;
     dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); if (!nextVideo) return;
-    // Let React remove its empty-state child before a provider replaces the
-    // stage contents with an iframe/video element. Otherwise React can try to
-    // remove a node the player has already removed and blank the whole app.
-    await new Promise(resolve => requestAnimationFrame(resolve));
+    // Let React finish its own render/commit before a provider replaces the
+    // stage contents with an iframe/video element, so the two never touch
+    // the DOM at the same moment. requestAnimationFrame never fires at all
+    // while the tab is backgrounded (browsers suspend it to save power) -
+    // on a phone that's normal (switching apps for a second, a notification
+    // shade), and without the timeout fallback here this would hang forever
+    // instead of just a frame, leaving the video stuck on "Loading" forever.
+    await new Promise(resolve => { const raf = requestAnimationFrame(resolve); setTimeout(() => { cancelAnimationFrame(raf); resolve(); }, 300); });
+    if (gen !== loadGen.current) return;
     setNotice('Загрузка видео…');
     const Player = playerFor[nextVideo.provider];
     if (!Player) { setNotice('Это видео нельзя встроить'); return; }
     try {
-      const instance = new Player(stage.current, nextVideo); player.current = instance;
+      const instance = new Player(stage.current, nextVideo);
+      if (gen !== loadGen.current) { instance.destroy(); return; }
+      player.current = instance;
       instance.on('ready', async () => {
         setNotice('Видео готово');
         if (sync) {
@@ -392,21 +411,25 @@ function Room({ account, onLogout }) {
       <div className="stage-wrap">
         <div className={`stage-shell ${video ? 'has-video' : ''}`}>
           {/* The player classes take over this node with imperative DOM
-              calls (container.replaceChildren(...)), which would silently
-              wipe out any React-rendered sibling placed inside it - like the
-              sync badges used to be. Nothing else may render inside `.stage`
-              once a video is loaded; overlays live in `.stage-shell` instead. */}
-          <div className="stage" ref={stage}>
-            {!video && <div className="empty">
-              <div className="play-icon">▶</div>
-              <h1>Смотрите вместе, минута в минуту.</h1>
-              <p>Вставьте ссылку на видео и позовите друзей в комнату.</p>
-              <form className="empty-form" onSubmit={add}>
-                <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" />
-                <button type="submit">Добавить <b>→</b></button>
-              </form>
-            </div>}
-          </div>
+              calls (container.replaceChildren(...)) at unpredictable times
+              relative to React's own render/commit cycle. React had no way
+              to know its own children here had already been ripped out from
+              under it, and would occasionally crash the whole app trying to
+              remove a node that wasn't there any more (NotFoundError / "The
+              object can not be found here" on Safari) - most often hit the
+              first time a video loads into a room. `.stage` must stay
+              permanently empty of React-rendered children; the empty-state
+              CTA below is a sibling drawn in the exact same spot instead. */}
+          <div className="stage" ref={stage} />
+          {!video && <div className="empty">
+            <div className="play-icon">▶</div>
+            <h1>Смотрите вместе, минута в минуту.</h1>
+            <p>Вставьте ссылку на видео и позовите друзей в комнату.</p>
+            <form className="empty-form" onSubmit={add}>
+              <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" />
+              <button type="submit">Добавить <b>→</b></button>
+            </form>
+          </div>}
           {video && people.length > 0 && <div className="stage-badges">
             {visiblePeople.map(person => {
               const t = extrapolate(person);
