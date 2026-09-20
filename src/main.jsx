@@ -109,7 +109,24 @@ function App() {
     vv?.addEventListener('resize', setAppMetrics);
     vv?.addEventListener('scroll', setAppMetrics);
     window.addEventListener('resize', setAppMetrics);
-    return () => { vv?.removeEventListener('resize', setAppMetrics); vv?.removeEventListener('scroll', setAppMetrics); window.removeEventListener('resize', setAppMetrics); };
+    // In-app browsers (Telegram, Instagram, ...) and some WebViews fire the
+    // viewport resize for the keyboard late, or in several steps while it
+    // animates in - a single measurement taken right on focus can land in
+    // the middle of that and freeze on a wrong (often near-empty) layout
+    // until something else happens to trigger a re-measurement, like typing.
+    // Re-checking a few times over the keyboard's animation window fixes
+    // that without waiting on an event that may never (re)fire.
+    const settleTimers = [];
+    const resettle = () => { settleTimers.forEach(clearTimeout); settleTimers.length = 0; [50, 150, 300, 500].forEach(delay => settleTimers.push(setTimeout(setAppMetrics, delay))); };
+    const onFocusIn = e => { if (e.target.matches?.('input, textarea')) resettle(); };
+    const onFocusOut = e => { if (e.target.matches?.('input, textarea')) resettle(); };
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      vv?.removeEventListener('resize', setAppMetrics); vv?.removeEventListener('scroll', setAppMetrics); window.removeEventListener('resize', setAppMetrics);
+      document.removeEventListener('focusin', onFocusIn); document.removeEventListener('focusout', onFocusOut);
+      settleTimers.forEach(clearTimeout);
+    };
   }, []);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
   const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
@@ -240,6 +257,10 @@ function App() {
     return () => { stopped = true; clearTimeout(reconnectTimer); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); clearInterval(positionTimer); ws.current?.close(); dispose(); };
   }, [roomId, load, applySync, dispose, send]);
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
+  // Opening the panel used to always start from a blank field, so there was
+  // no way to see what's currently playing without leaving the room - now it
+  // shows the current video's link, ready to edit or replace.
+  const toggleAddPanel = () => { if (!showAdd) setUrl(video?.originalUrl || ''); setShowAdd(v => !v); };
   const onUrlKeyDown = e => { if (e.key === 'Enter') add(e); };
   const copy = async () => {
     try { await navigator.clipboard.writeText(location.href); flashNotice('Ссылка скопирована!'); }
@@ -275,7 +296,7 @@ function App() {
       <a className="brand" href="/">watch<span>together</span></a>
       <div className={`status-pill ${connected ? 'on' : ''}`}><i /><span>{connected ? 'В сети' : 'Переподключение…'}</span></div>
       <div className="topbar-actions">
-        {video && <button className="icon-btn" onClick={() => setShowAdd(v => !v)} title="Добавить видео" aria-label="Добавить видео"><IconPlus /></button>}
+        {video && <button className="icon-btn" onClick={toggleAddPanel} title="Добавить видео" aria-label="Добавить видео"><IconPlus /></button>}
         <button className="icon-btn" onClick={copy} title="Скопировать ссылку на комнату" aria-label="Скопировать ссылку"><IconLink /></button>
       </div>
     </header>
