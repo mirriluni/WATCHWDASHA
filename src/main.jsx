@@ -92,11 +92,21 @@ function App() {
   // variable keeps the whole app pinned to exactly what's actually visible.
   useEffect(() => {
     const vv = window.visualViewport;
-    const setAppHeight = () => document.documentElement.style.setProperty('--app-height', `${(vv?.height ?? window.innerHeight)}px`);
-    setAppHeight();
-    vv?.addEventListener('resize', setAppHeight);
-    window.addEventListener('resize', setAppHeight);
-    return () => { vv?.removeEventListener('resize', setAppHeight); window.removeEventListener('resize', setAppHeight); };
+    // The keyboard doesn't just shrink the visible area - on many mobile
+    // browsers the page also pans down so the focused input stays in view
+    // (visualViewport.offsetTop > 0). Matching only the height and not this
+    // offset left the app pinned to the top of the *layout* viewport while
+    // the *visible* area had scrolled past it - the video was still "there",
+    // just above the fold, which read as it vanishing.
+    const setAppMetrics = () => {
+      document.documentElement.style.setProperty('--app-height', `${(vv?.height ?? window.innerHeight)}px`);
+      document.documentElement.style.setProperty('--app-top', `${vv?.offsetTop ?? 0}px`);
+    };
+    setAppMetrics();
+    vv?.addEventListener('resize', setAppMetrics);
+    vv?.addEventListener('scroll', setAppMetrics);
+    window.addEventListener('resize', setAppMetrics);
+    return () => { vv?.removeEventListener('resize', setAppMetrics); vv?.removeEventListener('scroll', setAppMetrics); window.removeEventListener('resize', setAppMetrics); };
   }, []);
   const send = useCallback(message => { if (ws.current?.readyState === WebSocket.OPEN) ws.current.send(JSON.stringify(message)); }, []);
   const dispose = useCallback(() => { player.current?.destroy(); player.current = null; lastPoll.current = null; }, []);
@@ -161,20 +171,41 @@ function App() {
     });
   }, [withSuppressed]);
   useEffect(() => {
+    let stopped = false; let reconnectTimer; let attempt = 0;
     // Vite runs on 5173 in development while the realtime server runs on 3001.
     // In a production build both share the same origin and port.
     const socketHost = import.meta.env.DEV ? `${location.hostname}:3001` : location.host;
-    const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}`); ws.current = socket;
-    socket.onopen = () => setConnected(true); socket.onclose = () => setConnected(false);
-    socket.onmessage = async ({ data }) => { let msg; try { msg = JSON.parse(data); } catch { return; }
-      if (msg.type === 'welcome') { setYou(msg.you); setPeople(msg.participants); setMessages(msg.messages || []); if (msg.video) load(msg.video, msg.playback); }
-      if (msg.type === 'participants') setPeople(msg.participants);
-      if (msg.type === 'chat') setMessages(current => [...current, msg.message].slice(-30));
-      if (msg.type === 'loadVideo') load(msg.video, msg.playback);
-      if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
-      if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
-      if (msg.type === 'error') flashNoticeRef.current(msg.message);
+    const connect = () => {
+      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}`); ws.current = socket;
+      socket.onopen = () => { setConnected(true); attempt = 0; };
+      // Mobile browsers routinely kill the socket (screen lock, backgrounding,
+      // switching Wi-Fi/cellular) without any user action. Without a retry
+      // here, that one device silently drops out of the room forever - it
+      // looks like "sync stopped working" when really nothing was listening
+      // any more. Reconnecting also gets a fresh "welcome" message, which
+      // re-syncs video/playback/roster/chat from scratch.
+      socket.onclose = () => {
+        setConnected(false);
+        if (stopped) return;
+        const delay = Math.min(1000 * 2 ** attempt, 8000); attempt++;
+        reconnectTimer = setTimeout(connect, delay);
+      };
+      socket.onmessage = async ({ data }) => { let msg; try { msg = JSON.parse(data); } catch { return; }
+        if (msg.type === 'welcome') { setYou(msg.you); setPeople(msg.participants); setMessages(msg.messages || []); if (msg.video) load(msg.video, msg.playback); }
+        if (msg.type === 'participants') setPeople(msg.participants);
+        if (msg.type === 'chat') setMessages(current => [...current, msg.message].slice(-30));
+        if (msg.type === 'loadVideo') load(msg.video, msg.playback);
+        if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
+        if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
+        if (msg.type === 'error') flashNoticeRef.current(msg.message);
+      };
     };
+    connect();
+    // A backgrounded mobile tab can leave a dead socket without ever firing
+    // "close" until much later - check as soon as the tab is foregrounded
+    // again instead of waiting for that.
+    const onVisible = () => { if (document.visibilityState === 'visible' && ws.current && ws.current.readyState !== WebSocket.OPEN && ws.current.readyState !== WebSocket.CONNECTING) { clearTimeout(reconnectTimer); attempt = 0; connect(); } };
+    document.addEventListener('visibilitychange', onVisible);
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
       if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) { lastPoll.current = null; return; }
@@ -193,7 +224,7 @@ function App() {
         send({ type: 'seek', time });
       }
     }, 1500);
-    return () => { clearInterval(timer); clearInterval(positionTimer); socket.close(); dispose(); };
+    return () => { stopped = true; clearTimeout(reconnectTimer); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); clearInterval(positionTimer); ws.current?.close(); dispose(); };
   }, [roomId, load, applySync, dispose, send]);
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
   const onUrlKeyDown = e => { if (e.key === 'Enter') add(e); };

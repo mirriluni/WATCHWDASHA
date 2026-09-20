@@ -11,6 +11,7 @@
   --accent-ink:#052240;
   --danger:#ff8a80;
   --app-height:100vh;
+  --app-top:0px;
 }
 *{box-sizing:border-box}
 html,body,#root{height:100%;overflow:hidden}
@@ -23,7 +24,7 @@ button{cursor:pointer}
 .fatal .play-icon{margin:0 auto 16px}
 .fatal button{margin-top:16px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:11px 20px}
 
-.app{position:fixed;top:0;left:50%;transform:translateX(-50%);width:100%;max-width:1480px;height:100vh;height:100dvh;height:var(--app-height);display:flex;flex-direction:column}
+.app{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(var(--app-top));width:100%;max-width:1480px;height:100vh;height:100dvh;height:var(--app-height);display:flex;flex-direction:column}
 .app:before{content:"";position:fixed;inset:-30%;background:radial-gradient(circle at 15% 15%,#1c2c3f 0,transparent 26%),radial-gradient(circle at 90% 80%,#1f1a3a 0,transparent 26%);opacity:.5;pointer-events:none;z-index:-1}
 
 .topbar{display:flex;align-items:center;gap:16px;padding:calc(14px + env(safe-area-inset-top)) 20px 14px;flex:0 0 auto}
