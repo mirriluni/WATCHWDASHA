@@ -144,7 +144,10 @@ function App() {
           playback.current = { state: sync.state, currentTime: target, updatedAt: Date.now() };
         }
       });
-      instance.on('error', () => setNotice('Не удалось загрузить видео'));
+      // A rejected `ready` (blocked/failed provider SDK script - common with
+      // ad-blockers on YouTube/VK) used to fail silently: video stays stuck,
+      // this person's badge time never appears, and nobody knows why.
+      instance.on('error', () => setNotice('Не удалось загрузить видео. Если видео всё же видно на экране — отключите блокировщик рекламы/трекеров и обновите страницу: он мог заблокировать скрипт плеера, из-за чего пропадает синхронизация.'));
       instance.on('playing', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time }); });
       instance.on('paused', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
       instance.on('ended', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
@@ -162,12 +165,14 @@ function App() {
     const target = Math.max(0, data.playback.currentTime + elapsed);
     playback.current = data.playback;
     await withSuppressed(async () => {
-      // Only re-seek when the drift is actually noticeable: seeking an
-      // iframe player (YouTube/VK) forces a rebuffer every time, which is
-      // the main source of the constant stutter/reload behavior.
-      const current = await p.getCurrentTime();
-      if (Math.abs(current - target) > SYNC_DRIFT_THRESHOLD) await p.seek(target);
-      if (data.playback.state === 'playing') await p.play(); else await p.pause();
+      try {
+        // Only re-seek when the drift is actually noticeable: seeking an
+        // iframe player (YouTube/VK) forces a rebuffer every time, which is
+        // the main source of the constant stutter/reload behavior.
+        const current = await p.getCurrentTime();
+        if (Math.abs(current - target) > SYNC_DRIFT_THRESHOLD) await p.seek(target);
+        if (data.playback.state === 'playing') await p.play(); else await p.pause();
+      } catch { /* provider SDK unavailable for this session - nothing to do */ }
     });
   }, [withSuppressed]);
   useEffect(() => {
@@ -209,7 +214,12 @@ function App() {
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
       if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) { lastPoll.current = null; return; }
-      const time = await player.current.getCurrentTime();
+      let time;
+      // If the provider's control SDK failed to initialize (e.g. blocked by
+      // an ad-blocker), getCurrentTime() rejects forever - without this
+      // catch, presence for this person silently stops being sent every
+      // single tick and their badge is stuck on "-" with no indication why.
+      try { time = await player.current.getCurrentTime(); } catch { return; }
       send({ type: 'presence', time });
       // Generic seek detection: YouTube/Vimeo/VK don't reliably fire a
       // dedicated "seeked" event (especially when scrubbing while paused),
@@ -234,7 +244,8 @@ function App() {
   };
   const syncEveryone = async () => {
     if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return flashNotice('Точная синхронизация недоступна для этого видео');
-    send({ type: 'forceSync', time: await player.current.getCurrentTime() }); flashNotice('Синхронизируем всех…', 2000);
+    try { send({ type: 'forceSync', time: await player.current.getCurrentTime() }); flashNotice('Синхронизируем всех…', 2000); }
+    catch { flashNotice('Не удалось прочитать время видео (возможно, заблокирован скрипт плеера)'); }
   };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
   const onChatKeyDown = e => { if (e.key === 'Enter' && !e.shiftKey) submitChat(e); };
