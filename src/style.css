@@ -75,7 +75,14 @@ button{cursor:pointer}
 .chat-pane{flex:0 0 360px;display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--border);border-radius:18px;overflow:hidden}
 .chat-header{flex:0 0 auto;padding:14px 16px;font:700 13px Manrope;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
 .chat-header span{color:var(--text-faint);font:11px 'DM Mono',monospace;font-weight:400}
-.messages{flex:1;min-height:64px;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:13px}
+/* flex:1 + min-height:0 (not a fixed floor) is deliberate: .chat-header and
+   .chat-form are flex:0 0 auto (never shrink), so when the keyboard leaves
+   very little room, this history list must be the one that shrinks - all
+   the way to 0 if it has to. .chat-pane clips overflow for its rounded
+   corners, so if this had a min-height greater than the space left over,
+   .chat-form (with the input the person is actively trying to use) would be
+   the one pushed past the edge and clipped into invisibility instead. */
+.messages{flex:1;min-height:0;overflow-y:auto;padding:14px 16px;display:flex;flex-direction:column;gap:13px}
 .messages::-webkit-scrollbar{width:6px}
 .messages::-webkit-scrollbar-thumb{background:#ffffff1a;border-radius:6px}
 .msg{max-width:90%;display:flex;flex-direction:column}
@@ -107,11 +114,19 @@ input::placeholder{color:var(--text-faint)}
   .stage{border-radius:14px}
   .stage-shell{transition:max-height .25s ease-out}
   .stage-shell.has-video{flex:0 0 auto;aspect-ratio:16/9;max-height:calc(var(--app-height, 100vh) * 0.38)}
-  .stage-shell:not(.has-video){flex:0 0 auto;min-height:280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
+  /* flex-shrink:1 (not the old flex:0 0 auto + min-height:280px) so this can
+     give up room under the same keyboard-cramped conditions described above
+     .messages, instead of rigidly holding 280px and squeezing the chat
+     input out of the (clipped) chat-pane entirely. */
+  .stage-shell:not(.has-video){flex:0 1 280px;max-height:calc(var(--app-height, 100vh) * 0.6)}
   .empty{padding:16px;max-width:320px}
   .empty h1{font-size:19px}
   .empty-form{flex-direction:column}
-  .chat-pane{flex:1 1 auto;min-height:0;border-radius:14px}
+  /* Safety net on top of the flex fixes above: if some combination of
+     screen size and keyboard height ever still leaves too little room,
+     scrolling keeps the input reachable instead of `overflow:hidden`
+     silently clipping it out of existence again. */
+  .chat-pane{flex:1 1 auto;min-height:0;border-radius:14px;overflow-y:auto}
   .stage-badges{top:8px;right:8px;left:8px}
   .badge{padding:3px 9px 3px 3px;font-size:10px;gap:5px}
   .badge-avatar{width:19px;height:19px;font-size:9px}
