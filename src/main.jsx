@@ -9,6 +9,26 @@ const pad = n => String(n).padStart(2, '0');
 const formatTime = value => { if (!Number.isFinite(value)) return '—'; const total = Math.max(0, Math.floor(value)); return `${pad(Math.floor(total / 3600))}:${pad(Math.floor(total / 60) % 60)}:${pad(total % 60)}`; };
 const formatClock = ts => { if (!Number.isFinite(ts)) return ''; const d = new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`; };
 const avatarColor = id => { let hash = 0; for (let i = 0; i < (id || '').length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0; return `hsl(${hash % 360}, 46%, 47%)`; };
+const formatDuration = seconds => {
+  const s = Math.max(0, Math.round(seconds || 0));
+  const h = Math.floor(s / 3600); const m = Math.floor((s % 3600) / 60);
+  if (h > 0) return `${h} ч ${m} мин`;
+  if (m > 0) return `${m} мин`;
+  return 'меньше минуты';
+};
+// A persistent per-browser id, generated once and kept in localStorage - not
+// an account (no password, no login), just enough to add up watch-time
+// across visits/rooms. If storage is unavailable (private mode, blocked),
+// stats simply don't work for that session - nothing else depends on it.
+const getViewerId = () => {
+  try {
+    let id = localStorage.getItem('wt_viewer_id');
+    if (!id) { id = crypto.randomUUID(); localStorage.setItem('wt_viewer_id', id); }
+    return id;
+  } catch { return null; }
+};
+const viewerId = getViewerId();
+const getSavedName = () => { try { return localStorage.getItem('wt_name') || ''; } catch { return ''; } };
 const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 // A drift smaller than this is imperceptible and not worth re-seeking for:
 // re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
@@ -25,6 +45,7 @@ const IconLink = () => <Icon><circle cx="7" cy="12" r="3.4" /><circle cx="17" cy
 const IconImage = () => <Icon><rect x="3" y="3" width="18" height="18" rx="3" /><circle cx="8.5" cy="8.5" r="1.5" /><polyline points="21 15 15 9 5 19" /></Icon>;
 const IconSend = () => <Icon><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></Icon>;
 const IconRefresh = () => <Icon><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></Icon>;
+const IconChart = () => <Icon><line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line x1="6" y1="20" x2="6" y2="16" /></Icon>;
 
 const compressImage = file => new Promise((resolve, reject) => {
   const objectUrl = URL.createObjectURL(file);
@@ -62,6 +83,9 @@ function App() {
   const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Вставьте ссылку, чтобы начать');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
   const [imageBusy, setImageBusy] = useState(false);
+  const [chatTab, setChatTab] = useState('chat');
+  const [stats, setStats] = useState(null);
+  const [nameInput, setNameInput] = useState(getSavedName);
   const [, setTick] = useState(0);
   const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null); const lastPoll = useRef(null);
   const fileInput = useRef(); const messagesEnd = useRef(); const noticeTimer = useRef();
@@ -200,9 +224,18 @@ function App() {
     // Vite runs on 5173 in development while the realtime server runs on 3001.
     // In a production build both share the same origin and port.
     const socketHost = import.meta.env.DEV ? `${location.hostname}:3001` : location.host;
+    const viewerParam = viewerId ? `&viewer=${encodeURIComponent(viewerId)}` : '';
     const connect = () => {
-      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}`); ws.current = socket;
-      socket.onopen = () => { setConnected(true); attempt = 0; };
+      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}${viewerParam}`); ws.current = socket;
+      socket.onopen = () => {
+        setConnected(true); attempt = 0;
+        // Re-announce the saved display name on every (re)connect - the
+        // server only knows names for the current connection, and a
+        // meaningful name is what turns "Гость" into someone recognizable
+        // on the watch-time stats tab.
+        const savedName = getSavedName();
+        if (savedName) send({ type: 'setName', name: savedName });
+      };
       // Mobile browsers routinely kill the socket (screen lock, backgrounding,
       // switching Wi-Fi/cellular) without any user action. Without a retry
       // here, that one device silently drops out of the room forever - it
@@ -223,6 +256,7 @@ function App() {
         if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
         if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
         if (msg.type === 'error') flashNoticeRef.current(msg.message);
+        if (msg.type === 'stats') setStats({ totalSeconds: msg.totalSeconds, partners: msg.partners || [] });
       };
     };
     connect();
@@ -270,6 +304,20 @@ function App() {
     if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) return flashNotice('Точная синхронизация недоступна для этого видео');
     try { send({ type: 'forceSync', time: await player.current.getCurrentTime() }); flashNotice('Синхронизируем всех…', 2000); }
     catch { flashNotice('Не удалось прочитать время видео (возможно, заблокирован скрипт плеера)'); }
+  };
+  // Poll the stats tab periodically while it's open so the numbers visibly
+  // move if you keep watching instead of only updating on the next visit.
+  useEffect(() => {
+    if (chatTab !== 'stats') return;
+    send({ type: 'stats' });
+    const id = setInterval(() => send({ type: 'stats' }), 20000);
+    return () => clearInterval(id);
+  }, [chatTab, send]);
+  const saveName = () => {
+    const name = nameInput.trim().slice(0, 24);
+    if (!name) return;
+    try { localStorage.setItem('wt_name', name); } catch { /* private mode / storage blocked - name just won't persist across visits */ }
+    send({ type: 'setName', name });
   };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
   const onChatKeyDown = e => { if (e.key === 'Enter' && !e.shiftKey) submitChat(e); };
@@ -346,21 +394,46 @@ function App() {
         </div>
       </div>
       <aside className="chat-pane">
-        <div className="chat-header">Чат комнаты <span>{messages.length}</span></div>
-        <div className="messages">
-          {messages.length ? messages.map(message => <div key={message.id} className={`msg ${message.authorId === you?.id ? 'mine' : ''}`}>
-            <div className="msg-meta"><b style={{ color: avatarColor(message.authorId) }}>{message.authorId === you?.id ? 'Вы' : message.author}</b><time>{formatClock(message.timestamp)}</time></div>
-            {message.image && <img className="msg-image" src={message.image} alt="Скриншот из чата" onClick={() => window.open(message.image, '_blank')} />}
-            {message.text && <p>{message.text}</p>}
-          </div>) : <p className="chat-empty">Скажите привет в комнате.</p>}
-          <div ref={messagesEnd} />
+        <div className="chat-header">
+          <button className={`chat-tab ${chatTab === 'chat' ? 'active' : ''}`} onClick={() => setChatTab('chat')}>Чат <span>{messages.length}</span></button>
+          <button className={`chat-tab ${chatTab === 'stats' ? 'active' : ''}`} onClick={() => setChatTab('stats')}><IconChart /> Статистика</button>
         </div>
-        <form className="chat-form" onSubmit={submitChat}>
-          <input type="file" accept="image/*" ref={fileInput} hidden onChange={onPickImage} />
-          <button type="button" className="attach-btn" onClick={() => fileInput.current?.click()} disabled={imageBusy} title="Отправить изображение" aria-label="Отправить изображение"><IconImage /></button>
-          <input value={chat} onChange={e => setChat(e.target.value)} onPaste={onPasteChat} onKeyDown={onChatKeyDown} maxLength="500" placeholder="Написать сообщение…" aria-label="Сообщение" />
-          <button type="submit" className="send-btn" aria-label="Отправить"><IconSend /></button>
-        </form>
+        {chatTab === 'chat' ? <>
+          <div className="messages">
+            {messages.length ? messages.map(message => <div key={message.id} className={`msg ${message.authorId === you?.id ? 'mine' : ''}`}>
+              <div className="msg-meta"><b style={{ color: avatarColor(message.authorId) }}>{message.authorId === you?.id ? 'Вы' : message.author}</b><time>{formatClock(message.timestamp)}</time></div>
+              {message.image && <img className="msg-image" src={message.image} alt="Скриншот из чата" onClick={() => window.open(message.image, '_blank')} />}
+              {message.text && <p>{message.text}</p>}
+            </div>) : <p className="chat-empty">Скажите привет в комнате.</p>}
+            <div ref={messagesEnd} />
+          </div>
+          <form className="chat-form" onSubmit={submitChat}>
+            <input type="file" accept="image/*" ref={fileInput} hidden onChange={onPickImage} />
+            <button type="button" className="attach-btn" onClick={() => fileInput.current?.click()} disabled={imageBusy} title="Отправить изображение" aria-label="Отправить изображение"><IconImage /></button>
+            <input value={chat} onChange={e => setChat(e.target.value)} onPaste={onPasteChat} onKeyDown={onChatKeyDown} maxLength="500" placeholder="Написать сообщение…" aria-label="Сообщение" />
+            <button type="submit" className="send-btn" aria-label="Отправить"><IconSend /></button>
+          </form>
+        </> : <div className="stats-panel">
+          <div className="stats-name-row">
+            <span>Ваше имя</span>
+            <div className="stats-name-input">
+              <input value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName(); }} maxLength="24" placeholder="Как вас называть?" />
+              <button onClick={saveName}>Сохранить</button>
+            </div>
+          </div>
+          <div className="stats-total">
+            <span className="stats-total-label">Всего вы посмотрели</span>
+            <span className="stats-total-value">{stats ? formatDuration(stats.totalSeconds) : '…'}</span>
+          </div>
+          <div className="stats-partners">
+            <div className="stats-partners-title">Вместе с</div>
+            {!stats ? <p className="chat-empty">Загрузка…</p> : stats.partners.length ? stats.partners.map(p => <div className="stats-partner" key={p.id}>
+              <span className="badge-avatar" style={{ background: avatarColor(p.id) }}>{(p.name || 'Г').slice(0, 1).toUpperCase()}</span>
+              <span className="stats-partner-name">{p.name}</span>
+              <span className="stats-partner-time">{formatDuration(p.seconds)}</span>
+            </div>) : <p className="chat-empty">Пока не с кем сравнивать — смотрите видео вместе с кем-нибудь.</p>}
+          </div>
+        </div>}
       </aside>
     </div>
   </div>;

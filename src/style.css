@@ -79,8 +79,11 @@ button{cursor:pointer}
 .sync-btn:disabled{opacity:.45;cursor:default}
 
 .chat-pane{flex:0 0 360px;display:flex;flex-direction:column;min-height:0;background:var(--panel);border:1px solid var(--border);border-radius:18px;overflow:hidden}
-.chat-header{flex:0 0 auto;padding:14px 16px;font:700 13px Manrope;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:6px}
+.chat-header{flex:0 0 auto;padding:6px;font:700 13px Manrope;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:4px}
 .chat-header span{color:var(--text-faint);font:11px 'DM Mono',monospace;font-weight:400}
+.chat-tab{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;border:0;background:transparent;color:var(--text-dim);font:700 13px Manrope;padding:9px 10px;border-radius:9px}
+.chat-tab.active{background:var(--panel-2);color:var(--text)}
+.chat-tab.active span{color:var(--text-faint)}
 /* flex:1 + min-height:0 (not a fixed floor) is deliberate: .chat-header and
    .chat-form are flex:0 0 auto (never shrink), so when the keyboard leaves
    very little room, this history list must be the one that shrinks - all
@@ -105,6 +108,20 @@ button{cursor:pointer}
 .send-btn{background:var(--accent);color:var(--accent-ink);border-color:transparent}
 .attach-btn:disabled{opacity:.5;cursor:default}
 .chat-form input{flex:1;min-width:0}
+
+.stats-panel{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:18px}
+.stats-name-row{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-dim)}
+.stats-name-input{display:flex;gap:8px}
+.stats-name-input input{flex:1;min-width:0}
+.stats-name-input button{border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 12px Manrope;padding:0 14px;white-space:nowrap}
+.stats-total{display:flex;flex-direction:column;gap:4px;padding:16px;background:var(--panel-2);border-radius:14px}
+.stats-total-label{font-size:12px;color:var(--text-dim)}
+.stats-total-value{font:800 24px Manrope;letter-spacing:-.5px}
+.stats-partners-title{font-size:12px;color:var(--text-dim);margin-bottom:10px;font-weight:700}
+.stats-partner{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+.stats-partner:last-child{border-bottom:0}
+.stats-partner-name{font-size:13px;font-weight:600;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.stats-partner-time{font:11px 'DM Mono',monospace;color:var(--text-dim);white-space:nowrap}
 
 input{border:1px solid var(--border);border-radius:11px;background:#0f1411;color:var(--text);padding:0 14px;height:38px;font-size:13px;outline:none}
 input:focus{border-color:rgba(124,179,240,.6)}

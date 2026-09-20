@@ -4,6 +4,9 @@ import { parseVideoUrl, VideoUrlError } from '../shared/video-url.js';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { initDb, touchViewerName, addWatchSeconds, getStats, pairKey } from './db.js';
+
+initDb().catch(error => console.error('initDb failed:', error));
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,18 +29,39 @@ function emit(r, message, except) { const payload = JSON.stringify(message); for
 function participants(r) { return [...r.clients.values()].map(({ id, name, position, positionUpdatedAt }) => ({ id, name, position: Number.isFinite(position) ? position : null, positionUpdatedAt: positionUpdatedAt || null })); }
 function sendRoster(r) { emit(r, { type: 'participants', participants: participants(r) }); }
 
+// A persistent per-browser id (localStorage, generated client-side) used
+// only to accumulate watch-time stats - never an account, no password, no
+// personal info. Falls back to no stats for that connection if missing or
+// malformed rather than rejecting it.
+const validViewerId = id => typeof id === 'string' && /^[a-zA-Z0-9-]{8,64}$/.test(id);
+const WATCH_TICK_MS = 20000;
+setInterval(() => {
+  const viewerSeconds = new Map(); const pairSeconds = new Map(); const tickSeconds = WATCH_TICK_MS / 1000;
+  for (const r of rooms.values()) {
+    if (r.playback.state !== 'playing') continue;
+    const ids = [...new Set([...r.clients.values()].map(u => u.viewerId).filter(Boolean))];
+    for (const id of ids) viewerSeconds.set(id, (viewerSeconds.get(id) || 0) + tickSeconds);
+    for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) {
+      const key = pairKey(ids[i], ids[j]); pairSeconds.set(key, (pairSeconds.get(key) || 0) + tickSeconds);
+    }
+  }
+  addWatchSeconds(viewerSeconds, pairSeconds);
+}, WATCH_TICK_MS);
+
 wss.on('connection', (ws, request) => {
   const params = new URL(request.url, 'http://localhost').searchParams;
   const roomId = params.get('room');
   if (!roomId || !/^[a-zA-Z0-9_-]{4,64}$/.test(roomId)) return ws.close(1008, 'Invalid room');
-  const r = room(roomId); const user = { id: randomUUID(), name: `Guest ${r.clients.size + 1}`, position: null, positionUpdatedAt: null };
+  const r = room(roomId); const viewerId = params.get('viewer');
+  const user = { id: randomUUID(), viewerId: validViewerId(viewerId) ? viewerId : null, name: `Guest ${r.clients.size + 1}`, position: null, positionUpdatedAt: null };
   r.clients.set(ws, user);
   ws.send(JSON.stringify({ type: 'welcome', you: user, video: r.video, playback: { ...r.playback, currentTime: actualTime(r), updatedAt: now() }, participants: participants(r), messages: r.messages, serverTime: now() }));
   sendRoster(r);
   ws.on('message', raw => {
     let msg; try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (!msg || typeof msg.type !== 'string') return;
-    if (msg.type === 'setName' && typeof msg.name === 'string') { user.name = msg.name.trim().slice(0, 24) || user.name; return sendRoster(r); }
+    if (msg.type === 'setName' && typeof msg.name === 'string') { user.name = msg.name.trim().slice(0, 24) || user.name; touchViewerName(user.viewerId, user.name); return sendRoster(r); }
+    if (msg.type === 'stats') { getStats(user.viewerId).then(stats => ws.readyState === ws.OPEN && ws.send(JSON.stringify({ type: 'stats', ...stats }))); return; }
     if (msg.type === 'chat' && (typeof msg.text === 'string' || typeof msg.image === 'string')) {
       const text = typeof msg.text === 'string' ? msg.text.trim().slice(0, 500) : '';
       // Images travel as compressed data: URLs from the client; cap the
