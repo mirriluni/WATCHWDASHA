@@ -24,7 +24,13 @@ button{cursor:pointer}
 .fatal .play-icon{margin:0 auto 16px}
 .fatal button{margin-top:16px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:11px 20px}
 
-.app{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(var(--app-top));width:100%;max-width:1480px;height:100vh;height:100dvh;height:var(--app-height);display:flex;flex-direction:column;transition:height .25s ease-out,transform .25s ease-out}
+/* No transition here: animating height/transform while the keyboard-open
+   metrics are still being re-measured a few times in quick succession (see
+   the focusin/focusout handling in main.jsx) made the layout visibly get
+   stuck mid-animation, squeezing the chat input into a barely-visible
+   sliver until something (like typing) forced one more layout pass. An
+   instant snap is less pretty but never gets stuck. */
+.app{position:fixed;top:0;left:50%;transform:translateX(-50%) translateY(var(--app-top));width:100%;max-width:1480px;height:100vh;height:100dvh;height:var(--app-height);display:flex;flex-direction:column}
 .app:before{content:"";position:fixed;inset:-30%;background:radial-gradient(circle at 15% 15%,#1c2c3f 0,transparent 26%),radial-gradient(circle at 90% 80%,#1f1a3a 0,transparent 26%);opacity:.5;pointer-events:none;z-index:-1}
 
 .topbar{display:flex;align-items:center;gap:16px;padding:calc(14px + env(safe-area-inset-top)) 20px 14px;flex:0 0 auto}
@@ -112,7 +118,6 @@ input::placeholder{color:var(--text-faint)}
   .room{flex-direction:column;padding:0 10px 10px;gap:8px;min-height:0}
   .stage-wrap{flex:0 0 auto}
   .stage{border-radius:14px}
-  .stage-shell{transition:max-height .25s ease-out}
   .stage-shell.has-video{flex:0 0 auto;aspect-ratio:16/9;max-height:calc(var(--app-height, 100vh) * 0.38)}
   /* flex-shrink:1 (not the old flex:0 0 auto + min-height:280px) so this can
      give up room under the same keyboard-cramped conditions described above
