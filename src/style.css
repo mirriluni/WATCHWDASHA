@@ -86,7 +86,7 @@ button{cursor:pointer}
 .dot{width:7px;height:7px;border-radius:50%;background:#5c6b62;flex:0 0 auto}
 .dot.on{background:var(--accent);box-shadow:0 0 0 4px rgba(124,179,240,.15)}
 .toolbar-actions{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}
-.watch-count{color:var(--text-faint);font:11px 'DM Mono',monospace;white-space:nowrap}
+.watch-count{color:var(--text-faint);font:11px 'DM Mono',monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px}
 .sync-btn{display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--panel);color:var(--text);font:600 12px Manrope;padding:9px 13px;border-radius:11px;white-space:nowrap}
 .sync-btn:hover{background:var(--panel-2)}
 .sync-btn:disabled{opacity:.45;cursor:default}

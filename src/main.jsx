@@ -16,6 +16,15 @@ const formatDuration = seconds => {
   if (m > 0) return `${m} мин`;
   return 'меньше минуты';
 };
+// A plain "N смотрят" told you nothing about who - but a full name-by-name
+// list gets unwieldy fast, so this caps it at two names plus a "+N" tail.
+const formatWatchers = (people, youId) => {
+  const names = people.map(p => (p.id === youId ? 'Вы' : (p.name || 'Гость')));
+  names.sort((a, b) => (a === 'Вы' ? -1 : b === 'Вы' ? 1 : 0));
+  if (names.length <= 1) return names[0] || 'Вы';
+  if (names.length === 2) return `${names[0]} и ${names[1]}`;
+  return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+};
 // The logged-in account, kept in localStorage so a login sticks until the
 // person explicitly logs out - never a silent timeout, by design.
 const ACCOUNT_KEY = 'wt_account';
@@ -415,7 +424,7 @@ function Room({ account, onLogout }) {
         <div className="stage-toolbar">
           <div className="toolbar-notice"><span className={`dot ${connected ? 'on' : ''}`} />{notice}</div>
           <div className="toolbar-actions">
-            <span className="watch-count">{people.length || 1} {people.length === 1 ? 'смотрит' : 'смотрят'}</span>
+            <span className="watch-count" title={people.map(p => p.id === you?.id ? 'Вы' : (p.name || 'Гость')).join(', ')}>{formatWatchers(people, you?.id)}</span>
             <button className="sync-btn" onClick={syncEveryone} disabled={people.length <= 1}><IconRefresh /><span>Синхронизировать</span></button>
           </div>
         </div>
