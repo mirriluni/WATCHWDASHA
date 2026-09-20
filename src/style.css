@@ -24,6 +24,16 @@ button{cursor:pointer}
 .fatal .play-icon{margin:0 auto 16px}
 .fatal button{margin-top:16px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:11px 20px}
 
+.auth-card{width:100%;max-width:340px;display:flex;flex-direction:column;gap:12px;background:var(--panel);border:1px solid var(--border);border-radius:20px;padding:28px;box-shadow:0 32px 80px #0007}
+.auth-card .brand{margin-bottom:4px}
+.auth-card h1{font-size:21px;margin:0;letter-spacing:-.5px}
+.auth-card p{margin:0 0 4px;color:var(--text-dim);font-size:13px;line-height:1.4}
+.auth-card input{height:42px}
+.auth-card button[type=submit]{border:0;border-radius:11px;background:var(--accent);color:var(--accent-ink);font:700 14px Manrope;height:42px;margin-top:4px}
+.auth-card button[type=submit]:disabled{opacity:.6;cursor:default}
+.auth-switch{border:0;background:transparent;color:var(--text-dim);font:600 12px Manrope;padding:4px;text-decoration:underline;text-underline-offset:2px}
+.auth-error{color:var(--danger);font-size:12px;margin:0}
+
 /* No transition here: animating height/transform while the keyboard-open
    metrics are still being re-measured a few times in quick succession (see
    the focusin/focusout handling in main.jsx) made the layout visibly get
@@ -42,6 +52,9 @@ button{cursor:pointer}
 .topbar-actions{margin-left:auto;display:flex;gap:8px}
 .icon-btn{width:38px;height:38px;border-radius:11px;border:1px solid var(--border);background:var(--panel);color:var(--text);display:grid;place-items:center;transition:.15s}
 .icon-btn:hover{background:var(--panel-2);border-color:#ffffff2c}
+.account-pill{display:flex;align-items:center;gap:8px;border:1px solid var(--border);background:var(--panel);border-radius:11px;padding:0 12px 0 6px;height:38px;font:600 13px Manrope;max-width:160px}
+.account-avatar{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font:700 11px Manrope;color:#fff;flex:0 0 auto}
+.account-pill span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 .add-video-bar{display:flex;gap:8px;padding:0 20px 14px;flex:0 0 auto}
 .add-video-bar input{flex:1}
@@ -110,10 +123,6 @@ button{cursor:pointer}
 .chat-form input{flex:1;min-width:0}
 
 .stats-panel{flex:1;min-height:0;overflow-y:auto;padding:16px;display:flex;flex-direction:column;gap:18px}
-.stats-name-row{display:flex;flex-direction:column;gap:8px;font-size:12px;color:var(--text-dim)}
-.stats-name-input{display:flex;gap:8px}
-.stats-name-input input{flex:1;min-width:0}
-.stats-name-input button{border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:700 12px Manrope;padding:0 14px;white-space:nowrap}
 .stats-total{display:flex;flex-direction:column;gap:4px;padding:16px;background:var(--panel-2);border-radius:14px}
 .stats-total-label{font-size:12px;color:var(--text-dim)}
 .stats-total-value{font:800 24px Manrope;letter-spacing:-.5px}
@@ -154,6 +163,8 @@ input::placeholder{color:var(--text-faint)}
   .badge-avatar{width:19px;height:19px;font-size:9px}
   .stage-toolbar{flex-wrap:wrap;row-gap:6px}
   input,.chat-form input{font-size:16px}
+  .account-pill{padding:0;width:38px;border-color:transparent;background:transparent}
+  .account-pill span:last-child{display:none}
 }
 @media(max-width:420px){
   .brand{font-size:16px}

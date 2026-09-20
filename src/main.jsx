@@ -16,19 +16,12 @@ const formatDuration = seconds => {
   if (m > 0) return `${m} мин`;
   return 'меньше минуты';
 };
-// A persistent per-browser id, generated once and kept in localStorage - not
-// an account (no password, no login), just enough to add up watch-time
-// across visits/rooms. If storage is unavailable (private mode, blocked),
-// stats simply don't work for that session - nothing else depends on it.
-const getViewerId = () => {
-  try {
-    let id = localStorage.getItem('wt_viewer_id');
-    if (!id) { id = crypto.randomUUID(); localStorage.setItem('wt_viewer_id', id); }
-    return id;
-  } catch { return null; }
-};
-const viewerId = getViewerId();
-const getSavedName = () => { try { return localStorage.getItem('wt_name') || ''; } catch { return ''; } };
+// The logged-in account, kept in localStorage so a login sticks until the
+// person explicitly logs out - never a silent timeout, by design.
+const ACCOUNT_KEY = 'wt_account';
+const getSavedAccount = () => { try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY)); } catch { return null; } };
+const saveAccount = account => { try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account)); } catch { /* private mode / storage blocked - stays logged in only for this tab session */ } };
+const clearSavedAccount = () => { try { localStorage.removeItem(ACCOUNT_KEY); } catch { /* nothing to clear */ } };
 const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 // A drift smaller than this is imperceptible and not worth re-seeking for:
 // re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
@@ -46,6 +39,7 @@ const IconImage = () => <Icon><rect x="3" y="3" width="18" height="18" rx="3" />
 const IconSend = () => <Icon><line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" /></Icon>;
 const IconRefresh = () => <Icon><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></Icon>;
 const IconChart = () => <Icon><line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line x1="6" y1="20" x2="6" y2="16" /></Icon>;
+const IconLogout = () => <Icon><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></Icon>;
 
 const compressImage = file => new Promise((resolve, reject) => {
   const objectUrl = URL.createObjectURL(file);
@@ -75,7 +69,44 @@ class AppErrorBoundary extends Component {
     return this.props.children;
   }
 }
-function App() {
+
+function AuthScreen({ onAuthenticated }) {
+  const [mode, setMode] = useState('login');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const submit = async e => {
+    e.preventDefault();
+    if (busy) return;
+    setError(''); setBusy(true);
+    try {
+      const res = await fetch(`/api/${mode === 'login' ? 'login' : 'register'}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Что-то пошло не так');
+      onAuthenticated({ token: data.token, accountId: data.accountId, username: data.username });
+    } catch (err) { setError(err.message || 'Не удалось подключиться к серверу'); }
+    finally { setBusy(false); }
+  };
+  return <main className="fatal-screen">
+    <form className="auth-card" onSubmit={submit}>
+      <a className="brand" href="/">watch<span>together</span></a>
+      <h1>{mode === 'login' ? 'Вход' : 'Регистрация'}</h1>
+      <p>Чтобы смотреть видео вместе, нужен аккаунт — вход сохраняется, пока вы сами не выйдете.</p>
+      <input value={username} onChange={e => setUsername(e.target.value)} placeholder="Имя пользователя" autoComplete="username" maxLength="20" required />
+      <input value={password} onChange={e => setPassword(e.target.value)} type="password" placeholder="Пароль" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} minLength="6" required />
+      {error && <p className="auth-error">{error}</p>}
+      <button type="submit" disabled={busy}>{busy ? 'Подождите…' : mode === 'login' ? 'Войти' : 'Зарегистрироваться'}</button>
+      <button type="button" className="auth-switch" onClick={() => { setMode(m => m === 'login' ? 'register' : 'login'); setError(''); }}>
+        {mode === 'login' ? 'Нет аккаунта? Зарегистрироваться' : 'Уже есть аккаунт? Войти'}
+      </button>
+    </form>
+  </main>;
+}
+
+function Room({ account, onLogout }) {
   const initial = location.pathname.match(/^\/room\/([\w-]+)/)?.[1];
   const [roomId] = useState(initial || makeRoom());
   const [url, setUrl] = useState(''); const [video, setVideo] = useState(null);
@@ -85,7 +116,6 @@ function App() {
   const [imageBusy, setImageBusy] = useState(false);
   const [chatTab, setChatTab] = useState('chat');
   const [stats, setStats] = useState(null);
-  const [nameInput, setNameInput] = useState(getSavedName);
   const [, setTick] = useState(0);
   const [connected, setConnected] = useState(false); const ws = useRef(); const player = useRef(); const stage = useRef(); const suppressDepth = useRef(0); const playback = useRef({ state: 'paused', currentTime: 0 }); const currentVideo = useRef(null); const lastPoll = useRef(null);
   const fileInput = useRef(); const messagesEnd = useRef(); const noticeTimer = useRef();
@@ -105,6 +135,8 @@ function App() {
   // should ever do that.
   const flashNoticeRef = useRef(flashNotice);
   useEffect(() => { flashNoticeRef.current = flashNotice; }, [flashNotice]);
+  const onLogoutRef = useRef(onLogout);
+  useEffect(() => { onLogoutRef.current = onLogout; }, [onLogout]);
   useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
   // Drives the live-ticking time badges: without a heartbeat, a person's
   // displayed position only updates when a network message happens to
@@ -224,27 +256,23 @@ function App() {
     // Vite runs on 5173 in development while the realtime server runs on 3001.
     // In a production build both share the same origin and port.
     const socketHost = import.meta.env.DEV ? `${location.hostname}:3001` : location.host;
-    const viewerParam = viewerId ? `&viewer=${encodeURIComponent(viewerId)}` : '';
     const connect = () => {
-      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}${viewerParam}`); ws.current = socket;
-      socket.onopen = () => {
-        setConnected(true); attempt = 0;
-        // Re-announce the saved display name on every (re)connect - the
-        // server only knows names for the current connection, and a
-        // meaningful name is what turns "Гость" into someone recognizable
-        // on the watch-time stats tab.
-        const savedName = getSavedName();
-        if (savedName) send({ type: 'setName', name: savedName });
-      };
+      const socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${socketHost}/ws?room=${encodeURIComponent(roomId)}&token=${encodeURIComponent(account.token)}`); ws.current = socket;
+      socket.onopen = () => { setConnected(true); attempt = 0; };
       // Mobile browsers routinely kill the socket (screen lock, backgrounding,
       // switching Wi-Fi/cellular) without any user action. Without a retry
       // here, that one device silently drops out of the room forever - it
       // looks like "sync stopped working" when really nothing was listening
       // any more. Reconnecting also gets a fresh "welcome" message, which
       // re-syncs video/playback/roster/chat from scratch.
-      socket.onclose = () => {
+      socket.onclose = event => {
         setConnected(false);
         if (stopped) return;
+        // The server only ever rejects the connection outright (4001) when
+        // the session token itself is bad - retrying with the same token
+        // would just fail forever, so send the person back to login instead
+        // of spinning silently.
+        if (event.code === 4001) return onLogoutRef.current();
         const delay = Math.min(1000 * 2 ** attempt, 8000); attempt++;
         reconnectTimer = setTimeout(connect, delay);
       };
@@ -289,7 +317,7 @@ function App() {
       }
     }, 1500);
     return () => { stopped = true; clearTimeout(reconnectTimer); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); clearInterval(positionTimer); ws.current?.close(); dispose(); };
-  }, [roomId, load, applySync, dispose, send]);
+  }, [roomId, load, applySync, dispose, send, account.token]);
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
   // Opening the panel used to always start from a blank field, so there was
   // no way to see what's currently playing without leaving the room - now it
@@ -313,12 +341,6 @@ function App() {
     const id = setInterval(() => send({ type: 'stats' }), 20000);
     return () => clearInterval(id);
   }, [chatTab, send]);
-  const saveName = () => {
-    const name = nameInput.trim().slice(0, 24);
-    if (!name) return;
-    try { localStorage.setItem('wt_name', name); } catch { /* private mode / storage blocked - name just won't persist across visits */ }
-    send({ type: 'setName', name });
-  };
   const submitChat = e => { e.preventDefault(); if (!chat.trim()) return; send({ type: 'chat', text: chat }); setChat(''); };
   const onChatKeyDown = e => { if (e.key === 'Enter' && !e.shiftKey) submitChat(e); };
   const sendImageFile = useCallback(async file => {
@@ -346,6 +368,11 @@ function App() {
       <div className="topbar-actions">
         {video && <button className="icon-btn" onClick={toggleAddPanel} title="Добавить видео" aria-label="Добавить видео"><IconPlus /></button>}
         <button className="icon-btn" onClick={copy} title="Скопировать ссылку на комнату" aria-label="Скопировать ссылку"><IconLink /></button>
+        <div className="account-pill" title={`Вы вошли как ${account.username}`}>
+          <span className="account-avatar" style={{ background: avatarColor(account.accountId) }}>{account.username.slice(0, 1).toUpperCase()}</span>
+          <span>{account.username}</span>
+        </div>
+        <button className="icon-btn" onClick={onLogout} title="Выйти из аккаунта" aria-label="Выйти из аккаунта"><IconLogout /></button>
       </div>
     </header>
     {showAdd && <form className="add-video-bar" onSubmit={add}>
@@ -414,13 +441,6 @@ function App() {
             <button type="submit" className="send-btn" aria-label="Отправить"><IconSend /></button>
           </form>
         </> : <div className="stats-panel">
-          <div className="stats-name-row">
-            <span>Ваше имя</span>
-            <div className="stats-name-input">
-              <input value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') saveName(); }} maxLength="24" placeholder="Как вас называть?" />
-              <button onClick={saveName}>Сохранить</button>
-            </div>
-          </div>
           <div className="stats-total">
             <span className="stats-total-label">Всего вы посмотрели</span>
             <span className="stats-total-value">{stats ? formatDuration(stats.totalSeconds) : '…'}</span>
@@ -437,5 +457,17 @@ function App() {
       </aside>
     </div>
   </div>;
+}
+
+function App() {
+  const [account, setAccount] = useState(getSavedAccount);
+  const handleAuthenticated = account => { saveAccount(account); setAccount(account); };
+  const handleLogout = useCallback(() => {
+    const current = getSavedAccount();
+    if (current?.token) fetch('/api/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: current.token }) }).catch(() => {});
+    clearSavedAccount(); setAccount(null);
+  }, []);
+  if (!account) return <AuthScreen onAuthenticated={handleAuthenticated} />;
+  return <Room key={account.accountId} account={account} onLogout={handleLogout} />;
 }
 createRoot(document.getElementById('root')).render(<AppErrorBoundary><App/></AppErrorBoundary>);
