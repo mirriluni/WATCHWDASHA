@@ -13,7 +13,10 @@ const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 // A drift smaller than this is imperceptible and not worth re-seeking for:
 // re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
 // fires its own "playing" state event and can bounce back through the room.
-const SYNC_DRIFT_THRESHOLD = 1.5;
+const SYNC_DRIFT_THRESHOLD = 5;
+// Threshold for the red "out of sync" badge color, kept as its own constant
+// in case it ever needs to move independently of the re-seek threshold above.
+const BADGE_DRIFT_THRESHOLD = 5;
 const MAX_IMAGE_DATA_URL = 550_000;
 
 const Icon = ({ children }) => <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" width="16" height="16">{children}</svg>;
@@ -304,7 +307,7 @@ function App() {
               const t = extrapolate(person);
               const isYou = person.id === you?.id;
               const drift = !isYou && Number.isFinite(t) && Number.isFinite(yourTime) ? Math.abs(t - yourTime) : null;
-              const state = isYou ? 'me' : drift === null ? '' : drift > SYNC_DRIFT_THRESHOLD ? 'drift' : 'synced';
+              const state = isYou ? 'me' : drift === null ? '' : drift > BADGE_DRIFT_THRESHOLD ? 'drift' : 'synced';
               return <div className={`badge ${state}`} key={person.id} title={isYou ? 'Вы' : person.name}>
                 <span className="badge-avatar" style={{ background: avatarColor(person.id) }}>{person.name.slice(0, 1).toUpperCase()}</span>
                 {timeKnown && <span className="badge-time">{formatTime(t)}</span>}
