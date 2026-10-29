@@ -31,6 +31,52 @@ const ACCOUNT_KEY = 'wt_account';
 const getSavedAccount = () => { try { return JSON.parse(localStorage.getItem(ACCOUNT_KEY)); } catch { return null; } };
 const saveAccount = account => { try { localStorage.setItem(ACCOUNT_KEY, JSON.stringify(account)); } catch { /* private mode / storage blocked - stays logged in only for this tab session */ } };
 const clearSavedAccount = () => { try { localStorage.removeItem(ACCOUNT_KEY); } catch { /* nothing to clear */ } };
+// Opening the bare site used to drop you into a brand-new random room every
+// time - so two people who each "just opened the site" were never together.
+// Remember the last room and return to it; links to a specific room still win.
+const LAST_ROOM_KEY = 'wt_last_room';
+const getLastRoom = () => { try { const id = localStorage.getItem(LAST_ROOM_KEY); return /^[a-zA-Z0-9_-]{4,64}$/.test(id || '') ? id : null; } catch { return null; } };
+const saveLastRoom = id => { try { localStorage.setItem(LAST_ROOM_KEY, id); } catch { /* ignore */ } };
+const parseRoomCode = text => { const t = (text || '').trim(); const fromUrl = t.match(/\/room\/([a-zA-Z0-9_-]{4,64})/)?.[1]; const code = fromUrl || t; return /^[a-zA-Z0-9_-]{4,64}$/.test(code) ? code : null; };
+// In-app browsers (Telegram, Instagram, VK app...) run a stripped-down
+// WebView: third-party cookies/storage for the vk.* iframe are often blocked
+// and autoplay rules are stricter. VK's own docs warn the widget breaks under
+// tracking protection. We can't fix that from inside the page - but we can
+// tell the person to open a real browser instead of letting it look broken.
+const UA = typeof navigator !== 'undefined' ? navigator.userAgent || '' : '';
+const IS_IOS = /iPhone|iPad|iPod/.test(UA) || (typeof navigator !== 'undefined' && navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const IN_APP_BROWSER = /Telegram|Instagram|FBAN|FBAV|FB_IAB|VKClient|VKAndroidApp|Viber|Line\/|MicroMessenger|Snapchat|TikTok/i.test(UA)
+  || (IS_IOS && !/Safari\//.test(UA) && !/CriOS|FxiOS|EdgiOS|OPiOS/.test(UA))
+  || /; wv\)/.test(UA);
+const describePlayerError = (error, video) => {
+  const vk = video?.provider === 'vk';
+  const open = vk ? 'Открыть в VK Видео' : 'Открыть на сайте источника';
+  if (error.code === 'unreachable' || error.code === 'sdk' || error.code === 'init') return {
+    title: vk ? 'VK Видео не отвечает' : 'Плеер не загрузился',
+    text: vk ? 'Ни один из адресов VK (vkvideo.ru, vk.com, vk.ru) не ответил, или скрипт плеера заблокирован.' : 'Скрипт плеера не загрузился.',
+    steps: [
+      IN_APP_BROWSER ? 'Откройте сайт в обычном браузере (Safari или Chrome), а не внутри Telegram/Instagram — там VK чаще всего не работает.' : null,
+      'Если включён VPN — выключите его; если выключен — попробуйте включить (VK блокируют в одних странах и не любят VPN-адреса в других).',
+      'Отключите блокировщик рекламы для этого сайта. В Safari: Настройки → Safari → выключите «Не отслеживать» (VK прямо пишет, что из-за этого плеер не работает).',
+      'Нажмите «Попробовать снова» — иногда помогает просто перезапуск плеера.',
+    ].filter(Boolean), open,
+  };
+  if (vk) return {
+    title: `VK отказался показать это видео${error.code ? ` (код ${error.code})` : ''}`,
+    text: 'Обычно так бывает, если видео приватное, доступно только по ссылке, удалено или недоступно в вашей стране.',
+    steps: [
+      'Откройте видео в VK → «Поделиться» → «Экспортировать» и вставьте сюда весь код с <iframe> — в нём есть ключ доступа (hash), без него плеер не покажет закрытое видео.',
+      'Проверьте, что видео вообще открывается у вас в VK напрямую (кнопка ниже).',
+      'Если видео заблокировано для вашей страны — поможет только VPN.',
+    ], open,
+  };
+  if (video?.provider === 'youtube') return {
+    title: `YouTube не воспроизводит это видео${error.code ? ` (код ${error.code})` : ''}`,
+    text: [101, 150].includes(Number(error.code)) ? 'Автор запретил встраивание этого видео на другие сайты.' : Number(error.code) === 100 ? 'Видео удалено или приватное.' : 'Проверьте, что видео открывается у вас напрямую.',
+    steps: ['Попробуйте другое видео или другую ссылку.', 'Если YouTube недоступен в вашей стране — поможет только VPN.'], open,
+  };
+  return { title: 'Видео не воспроизводится', text: 'Проверьте ссылку и попробуйте ещё раз.', steps: [], open };
+};
 const exactSyncProviders = ['youtube', 'vimeo', 'direct', 'vk'];
 // A drift smaller than this is imperceptible and not worth re-seeking for:
 // re-seeking an iframe player (YouTube/VK) forces it to rebuffer, which
@@ -49,6 +95,8 @@ const IconSend = () => <Icon><line x1="22" y1="2" x2="11" y2="13" /><polygon poi
 const IconRefresh = () => <Icon><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></Icon>;
 const IconChart = () => <Icon><line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line x1="6" y1="20" x2="6" y2="16" /></Icon>;
 const IconLogout = () => <Icon><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></Icon>;
+const IconPlay = () => <Icon><polygon points="6 3 20 12 6 21 6 3" /></Icon>;
+const IconSound = () => <Icon><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" /><path d="M15.5 8.5a5 5 0 0 1 0 7" /><path d="M19 5a9 9 0 0 1 0 14" /></Icon>;
 
 const compressImage = file => new Promise((resolve, reject) => {
   const objectUrl = URL.createObjectURL(file);
@@ -117,9 +165,15 @@ function AuthScreen({ onAuthenticated }) {
 
 function Room({ account, onLogout }) {
   const initial = location.pathname.match(/^\/room\/([\w-]+)/)?.[1];
-  const [roomId] = useState(initial || makeRoom());
+  const [roomId] = useState(initial || getLastRoom() || makeRoom());
   const [url, setUrl] = useState(''); const [video, setVideo] = useState(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [joinCode, setJoinCode] = useState('');
+  // 'tap' = playback needs a user gesture; 'unmute' = we started muted and
+  // need a gesture to turn sound on; null = nothing to show.
+  const [overlay, setOverlay] = useState(null);
+  const [playerError, setPlayerError] = useState(null);
+  const [hintDismissed, setHintDismissed] = useState(() => { try { return !!localStorage.getItem('wt_hint_dismissed'); } catch { return true; } });
   const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Вставьте ссылку, чтобы начать');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
   const [imageBusy, setImageBusy] = useState(false);
@@ -146,7 +200,7 @@ function Room({ account, onLogout }) {
   useEffect(() => { flashNoticeRef.current = flashNotice; }, [flashNotice]);
   const onLogoutRef = useRef(onLogout);
   useEffect(() => { onLogoutRef.current = onLogout; }, [onLogout]);
-  useEffect(() => { if (!initial) history.replaceState({}, '', `/room/${roomId}`); }, [initial, roomId]);
+  useEffect(() => { if (initial !== roomId) history.replaceState({}, '', `/room/${roomId}`); saveLastRoom(roomId); }, [initial, roomId]);
   // Drives the live-ticking time badges: without a heartbeat, a person's
   // displayed position only updates when a network message happens to
   // arrive, which looks stuck/jumpy instead of counting seconds smoothly.
@@ -212,6 +266,42 @@ function Room({ account, onLogout }) {
     suppressDepth.current++;
     try { await fn(); } finally { setTimeout(() => { suppressDepth.current = Math.max(0, suppressDepth.current - 1); }, graceMs); }
   }, []);
+  // Phones refuse a programmatic play() that didn't come from a tap on
+  // *this* device - which is exactly what "the other person pressed play"
+  // is. Browsers do allow a *muted* start though, so the fallback ladder is:
+  // play → (blocked?) mute+play → show a one-tap "включить звук" button →
+  // (even that blocked?) show a one-tap "смотреть" button. The tap handlers
+  // call play()/unmute() synchronously inside the gesture, which is what
+  // makes them count. Without this, a remote play() just silently did
+  // nothing on the phone and the room looked "broken" for that person.
+  const playAttempt = useRef(0);
+  const ensurePlaying = useCallback(async p => {
+    const attempt = ++playAttempt.current;
+    const stillWanted = () => attempt === playAttempt.current && player.current === p && playback.current.state === 'playing';
+    const settled = async () => { await new Promise(r => setTimeout(r, 1300)); if (!stillWanted()) return true; const s = await p.getState().catch(() => null); return s === 'playing' || s === 'ended' || s === null; };
+    try {
+      await p.play();
+      if (await settled()) { if (stillWanted() && !(await p.isMuted().catch(() => false))) setOverlay(null); return; }
+      await p.mute(); await p.play();
+      if (await settled()) { if (stillWanted()) setOverlay('unmute'); return; }
+      if (stillWanted()) setOverlay('tap');
+    } catch { if (stillWanted()) setOverlay('tap'); }
+  }, []);
+  const tapToPlay = useCallback(async () => {
+    const p = player.current; if (!p) return;
+    const attempt = ++playAttempt.current;
+    try { await Promise.all([p.unmute(), p.play()]); } catch { /* gesture-driven, nothing more we can do */ }
+    setOverlay(null);
+    // Some browsers (notably iOS Safari) won't let a tap on *our* page start
+    // media inside a cross-origin iframe. The player's own ▶ always works,
+    // so if nothing happened, step aside and point at it; the "playing"
+    // handler below then snaps the person to the room's position.
+    await new Promise(r => setTimeout(r, 2500));
+    if (attempt !== playAttempt.current || player.current !== p || playback.current.state !== 'playing') return;
+    const s = await p.getState().catch(() => null);
+    if (s !== 'playing' && s !== 'ended' && s !== null) setOverlay('manual');
+  }, []);
+  const tapToUnmute = useCallback(async () => { const p = player.current; if (!p) return; try { await p.unmute(); } catch { /* ignore */ } setOverlay(null); }, []);
   // A flaky connection (mobile data, VPN) reconnects a lot, and every
   // reconnect gets a fresh "welcome" that calls load() again. If a new
   // load() starts while an older one is still in its startup `await`, both
@@ -220,9 +310,13 @@ function Room({ account, onLogout }) {
   // and inconsistent-state reports. Each call gets a generation number and
   // bails as soon as it notices a newer one has taken over.
   const loadGen = useRef(0);
+  const inAd = useRef(false);
   const load = useCallback(async (nextVideo, sync) => {
     const gen = ++loadGen.current;
-    dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); if (!nextVideo) return;
+    dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); setPlayerError(null); setOverlay(null); inAd.current = false; if (!nextVideo) return;
+    const elapsed0 = sync?.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
+    const startTime = sync ? Math.max(0, sync.currentTime + elapsed0) : 0;
+    playback.current = sync ? { state: sync.state, currentTime: startTime, updatedAt: Date.now() } : { state: 'paused', currentTime: 0, updatedAt: Date.now() };
     // Let React finish its own render/commit before a provider replaces the
     // stage contents with an iframe/video element, so the two never touch
     // the DOM at the same moment. requestAnimationFrame never fires at all
@@ -236,38 +330,68 @@ function Room({ account, onLogout }) {
     const Player = playerFor[nextVideo.provider];
     if (!Player) { setNotice('Это видео нельзя встроить'); return; }
     try {
-      const instance = new Player(stage.current, nextVideo);
+      // Start the embed at the room's position (VK `t=`, YouTube `start`,
+      // ...) instead of loading at 0:00 and seeking afterwards - one fewer
+      // rebuffer, and the first frame the person sees is already in sync.
+      const instance = new Player(stage.current, nextVideo, { startTime });
       if (gen !== loadGen.current) { instance.destroy(); return; }
       player.current = instance;
+      const timeOf = () => instance.getCurrentTime().catch(() => playback.current.currentTime);
       instance.on('ready', async () => {
-        setNotice('Видео готово');
-        if (sync) {
-          const elapsed = sync.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
-          const target = Math.max(0, sync.currentTime + elapsed);
-          await withSuppressed(async () => { await instance.seek(target); if (sync.state === 'playing') await instance.play(); });
-          playback.current = { state: sync.state, currentTime: target, updatedAt: Date.now() };
-        }
+        if (player.current !== instance) return;
+        setNotice('Видео готово'); setPlayerError(null);
+        if (!sync) return;
+        const elapsed = sync.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
+        const target = Math.max(0, sync.currentTime + elapsed);
+        playback.current = { state: sync.state, currentTime: target, updatedAt: Date.now() };
+        await withSuppressed(async () => {
+          try {
+            const current = await instance.getCurrentTime();
+            if (Math.abs(current - target) > SYNC_DRIFT_THRESHOLD) await instance.seek(target);
+            if (sync.state === 'playing') await ensurePlaying(instance);
+          } catch { /* handled through the error event */ }
+        }, 1500);
       });
-      // A rejected `ready` (blocked/failed provider SDK script - common with
-      // ad-blockers on YouTube/VK) used to fail silently: video stays stuck,
-      // this person's badge time never appears, and nobody knows why.
-      instance.on('error', () => setNotice('Не удалось загрузить видео. Если видео всё же видно на экране — отключите блокировщик рекламы/трекеров и обновите страницу: он мог заблокировать скрипт плеера, из-за чего пропадает синхронизация.'));
-      instance.on('playing', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time }); });
-      instance.on('paused', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
-      instance.on('ended', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
-      // Scrubbing the timeline doesn't change play/paused state, so it never
-      // reaches the handlers above - and without this, the periodic sync
-      // correction below would snap the video back to the old, un-seeked
-      // position within a few seconds.
-      instance.on('seeked', async () => { if (suppressDepth.current) return; const time = await instance.getCurrentTime(); playback.current = { ...playback.current, currentTime: time, updatedAt: Date.now() }; send({ type: 'seek', time }); });
-    } catch (error) { console.error('Player creation error:', error); setNotice('Не удалось загрузить видео'); }
-  }, [dispose, send, withSuppressed]);
+      instance.on('retrying', ({ host }) => setNotice(`VK не ответил, пробуем другой адрес (${host})…`));
+      instance.on('error', detail => { if (player.current === instance) { setPlayerError({ provider: nextVideo.provider, ...detail }); setNotice('Видео не загрузилось'); } });
+      // Only real *transitions* are forwarded to the room. Providers re-fire
+      // "playing" after every rebuffer/seek and "paused" during stalls; if
+      // the room already is in that state this is noise, not a user action -
+      // forwarding it is how a video used to "start by itself" for others.
+      instance.on('playing', async () => {
+        if (inAd.current || player.current !== instance) return;
+        setOverlay(o => (o === 'tap' || o === 'manual' ? null : o));
+        if (suppressDepth.current) return;
+        if (playback.current.state === 'playing') {
+          // Already playing room-wide (e.g. the person just pressed the
+          // player's own ▶ after a blocked remote start): don't re-announce,
+          // but do jump to where the room actually is right now.
+          const room = playback.current; const target = Math.max(0, room.currentTime + (Date.now() - room.updatedAt) / 1000);
+          const time = await timeOf();
+          if (Math.abs(time - target) > SYNC_DRIFT_THRESHOLD) await withSuppressed(() => instance.seek(target).catch(() => {}));
+          return;
+        }
+        const time = await timeOf(); playback.current = { state: 'playing', currentTime: time, updatedAt: Date.now() }; send({ type: 'play', time });
+      });
+      instance.on('paused', async () => { if (suppressDepth.current || inAd.current || player.current !== instance) return; if (playback.current.state !== 'playing') return; const time = await timeOf(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'pause', time }); });
+      instance.on('ended', async () => { if (suppressDepth.current || inAd.current || player.current !== instance) return; if (playback.current.state !== 'playing') return; const time = await timeOf(); playback.current = { state: 'paused', currentTime: time, updatedAt: Date.now() }; send({ type: 'ended', time }); });
+      instance.on('seeked', async () => { if (suppressDepth.current || inAd.current || player.current !== instance) return; const time = await timeOf(); if (Math.abs(time - playback.current.currentTime - (playback.current.state === 'playing' ? (Date.now() - playback.current.updatedAt) / 1000 : 0)) < 1) return; playback.current = { ...playback.current, currentTime: time, updatedAt: Date.now() }; send({ type: 'seek', time }); });
+      // VK plays pre-roll ads: the timeline reports ad time, play/pause
+      // during the ad don't mean anything for the room, and when the ad
+      // ends we're behind everyone else - so freeze outgoing sync for the
+      // duration and ask the server where the room is once it's over.
+      instance.on('adStarted', () => { inAd.current = true; setNotice('Реклама VK — после неё догоним комнату'); });
+      instance.on('adCompleted', () => { inAd.current = false; setNotice('Видео готово'); send({ type: 'syncRequest' }); });
+      instance.on('autoplayBlocked', () => { if (player.current === instance && playback.current.state === 'playing') ensurePlaying(instance); });
+    } catch (error) { console.error('Player creation error:', error); setPlayerError({ provider: nextVideo.provider, code: 'init' }); setNotice('Не удалось загрузить видео'); }
+  }, [dispose, send, withSuppressed, ensurePlaying]);
   const applySync = useCallback(async (data) => {
     if (!player.current || !data.playback) return;
     const p = player.current;
     const elapsed = data.playback.state === 'playing' ? (Date.now() - data.playback.updatedAt) / 1000 : 0;
     const target = Math.max(0, data.playback.currentTime + elapsed);
-    playback.current = data.playback;
+    playback.current = { ...data.playback, currentTime: target, updatedAt: Date.now() };
+    if (inAd.current) return;
     await withSuppressed(async () => {
       try {
         // Only re-seek when the drift is actually noticeable: seeking an
@@ -275,10 +399,21 @@ function Room({ account, onLogout }) {
         // the main source of the constant stutter/reload behavior.
         const current = await p.getCurrentTime();
         if (Math.abs(current - target) > SYNC_DRIFT_THRESHOLD) await p.seek(target);
-        if (data.playback.state === 'playing') await p.play(); else await p.pause();
+        const state = await p.getState().catch(() => null);
+        if (data.playback.state === 'playing') { if (state !== 'playing') await ensurePlaying(p); }
+        else if (state !== 'paused' && state !== 'ended' && state !== 'unstarted') { await p.pause(); setOverlay(null); }
       } catch { /* provider SDK unavailable for this session - nothing to do */ }
     });
-  }, [withSuppressed]);
+  }, [withSuppressed, ensurePlaying]);
+  // Reconnects used to tear the whole player down and rebuild it from the
+  // "welcome" message every time - on a flaky phone connection that meant
+  // the VK iframe reloading (and re-running its pre-roll ad) over and over.
+  // If the room still has the same video, just realign instead.
+  const loadOrSync = useCallback((nextVideo, playbackState) => {
+    const current = currentVideo.current;
+    if (current && nextVideo && player.current && current.provider === nextVideo.provider && current.videoId === nextVideo.videoId && (current.url || '') === (nextVideo.url || '')) return applySync({ playback: playbackState });
+    return load(nextVideo, playbackState);
+  }, [applySync, load]);
   useEffect(() => {
     let stopped = false; let reconnectTimer; let attempt = 0;
     // Vite runs on 5173 in development while the realtime server runs on 3001.
@@ -305,11 +440,11 @@ function Room({ account, onLogout }) {
         reconnectTimer = setTimeout(connect, delay);
       };
       socket.onmessage = async ({ data }) => { let msg; try { msg = JSON.parse(data); } catch { return; }
-        if (msg.type === 'welcome') { setYou(msg.you); setPeople(msg.participants); setMessages(msg.messages || []); if (msg.video) load(msg.video, msg.playback); }
+        if (msg.type === 'welcome') { setYou(msg.you); setPeople(msg.participants); setMessages(msg.messages || []); if (msg.video) loadOrSync(msg.video, msg.playback); }
         if (msg.type === 'participants') setPeople(msg.participants);
         if (msg.type === 'chat') setMessages(current => [...current, msg.message].slice(-30));
-        if (msg.type === 'loadVideo') load(msg.video, msg.playback);
-        if (msg.type === 'sync') { if (!currentVideo.current && msg.video) load(msg.video, msg.playback); else applySync(msg); }
+        if (msg.type === 'loadVideo') loadOrSync(msg.video, msg.playback);
+        if (msg.type === 'sync') { if (msg.video) loadOrSync(msg.video, msg.playback); }
         if (['play','pause','seek','ended'].includes(msg.type)) applySync({ playback: { state: msg.type === 'play' ? 'playing' : msg.type === 'pause' || msg.type === 'ended' ? 'paused' : playback.current.state, currentTime: msg.time, updatedAt: msg.timestamp } });
         if (msg.type === 'error') flashNoticeRef.current(msg.message);
         if (msg.type === 'stats') setStats({ totalSeconds: msg.totalSeconds, partners: msg.partners || [] });
@@ -323,7 +458,7 @@ function Room({ account, onLogout }) {
     document.addEventListener('visibilitychange', onVisible);
     const timer = setInterval(() => send({ type: 'syncRequest' }), 8000);
     const positionTimer = setInterval(async () => {
-      if (!player.current || !exactSyncProviders.includes(currentVideo.current?.provider)) { lastPoll.current = null; return; }
+      if (!player.current || inAd.current || !exactSyncProviders.includes(currentVideo.current?.provider)) { lastPoll.current = null; return; }
       let time;
       // If the provider's control SDK failed to initialize (e.g. blocked by
       // an ad-blocker), getCurrentTime() rejects forever - without this
@@ -345,7 +480,16 @@ function Room({ account, onLogout }) {
       }
     }, 1500);
     return () => { stopped = true; clearTimeout(reconnectTimer); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); clearInterval(positionTimer); ws.current?.close(); dispose(); };
-  }, [roomId, load, applySync, dispose, send, account.token]);
+  }, [roomId, loadOrSync, dispose, send, account.token]);
+  const joinRoom = e => {
+    e?.preventDefault?.();
+    const code = parseRoomCode(joinCode);
+    if (!code) return flashNotice('Введите код комнаты (например, k3x9qa) или ссылку на неё');
+    if (code === roomId) { setShowAdd(false); return; }
+    saveLastRoom(code); location.href = `/room/${code}`;
+  };
+  const retryPlayer = () => { if (currentVideo.current) load(currentVideo.current, playback.current); };
+  const dismissHint = () => { setHintDismissed(true); try { localStorage.setItem('wt_hint_dismissed', '1'); } catch { /* ignore */ } };
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
   // Opening the panel used to always start from a blank field, so there was
   // no way to see what's currently playing without leaving the room - now it
@@ -394,8 +538,8 @@ function Room({ account, onLogout }) {
       <a className="brand" href="/">watch<span>together</span></a>
       <div className={`status-pill ${connected ? 'on' : ''}`}><i /><span>{connected ? 'В сети' : 'Переподключение…'}</span></div>
       <div className="topbar-actions">
-        {video && <button className="icon-btn" onClick={toggleAddPanel} title="Добавить видео" aria-label="Добавить видео"><IconPlus /></button>}
-        <button className="icon-btn" onClick={copy} title="Скопировать ссылку на комнату" aria-label="Скопировать ссылку"><IconLink /></button>
+        <button className="icon-btn" onClick={toggleAddPanel} title="Добавить видео / перейти в другую комнату" aria-label="Добавить видео или перейти в другую комнату"><IconPlus /></button>
+        <button className="room-pill" onClick={copy} title="Нажмите, чтобы скопировать ссылку на эту комнату"><IconLink /><span>комната</span><b>{roomId}</b></button>
         <div className="account-pill" title={`Вы вошли как ${account.username}`}>
           <span className="account-avatar" style={{ background: avatarColor(account.accountId) }}>{account.username.slice(0, 1).toUpperCase()}</span>
           <span>{account.username}</span>
@@ -403,10 +547,21 @@ function Room({ account, onLogout }) {
         <button className="icon-btn" onClick={onLogout} title="Выйти из аккаунта" aria-label="Выйти из аккаунта"><IconLogout /></button>
       </div>
     </header>
-    {showAdd && <form className="add-video-bar" onSubmit={add}>
-      <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Вставьте ссылку на видео…" aria-label="Ссылка на видео" autoFocus />
-      <button type="submit">Добавить</button>
-    </form>}
+    {IN_APP_BROWSER && !hintDismissed && <div className="hint-banner">
+      <span>Похоже, сайт открыт внутри другого приложения (Telegram и т.п.). Плеер VK там часто не запускается. Нажмите «⋯» → «Открыть в браузере» (Safari/Chrome) — так всё будет работать.</span>
+      <button onClick={dismissHint}>Понятно</button>
+    </div>}
+    {showAdd && <>
+      <form className="add-video-bar" onSubmit={add}>
+        <input value={url} onChange={e => setUrl(e.target.value)} onKeyDown={onUrlKeyDown} placeholder="Ссылка на видео или код <iframe> из «Экспортировать»" aria-label="Ссылка на видео" autoFocus />
+        <button type="submit">Добавить</button>
+      </form>
+      <form className="join-row" onSubmit={joinRoom}>
+        <span>Другая комната:</span>
+        <input value={joinCode} onChange={e => setJoinCode(e.target.value)} placeholder="код или ссылка на комнату" aria-label="Код комнаты" />
+        <button type="submit">Перейти</button>
+      </form>
+    </>}
     <div className="room">
       <div className="stage-wrap">
         <div className={`stage-shell ${video ? 'has-video' : ''}`}>
@@ -443,6 +598,26 @@ function Room({ account, onLogout }) {
             })}
             {overflow > 0 && <div className="badge more">+{overflow}</div>}
           </div>}
+          {video && !playerError && overlay === 'tap' && <div className="stage-overlay">
+            <button className="overlay-btn" onClick={tapToPlay}><IconPlay />Смотреть вместе</button>
+            <p className="overlay-text">Браузер не даёт запустить видео без вашего касания. Одно нажатие — и вы на той же секунде, что и все.</p>
+          </div>}
+          {video && !playerError && overlay === 'manual' && <div className="stage-overlay soft">
+            <div className="overlay-pill"><IconPlay />Нажмите ▶ прямо на видео — и вы сразу догоните комнату</div>
+          </div>}
+          {video && !playerError && overlay === 'unmute' && <div className="stage-overlay soft">
+            <button className="overlay-btn small" onClick={tapToUnmute}><IconSound />Включить звук</button>
+          </div>}
+          {video && playerError && (() => { const d = describePlayerError(playerError, video); return <div className="stage-overlay"><div className="diag">
+            <h3>{d.title}</h3>
+            <p>{d.text}</p>
+            {d.steps.length > 0 && <ol>{d.steps.map((s, i) => <li key={i}>{s}</li>)}</ol>}
+            <div className="diag-actions">
+              <button className="primary" onClick={retryPlayer}>Попробовать снова</button>
+              {video.originalUrl && <button onClick={() => window.open(video.originalUrl, '_blank', 'noopener')}>{d.open}</button>}
+              <button onClick={() => setPlayerError(null)}>Скрыть</button>
+            </div>
+          </div></div>; })()}
         </div>
         <div className="stage-toolbar">
           <div className="toolbar-notice"><span className={`dot ${connected ? 'on' : ''}`} />{notice}</div>

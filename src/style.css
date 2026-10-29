@@ -76,6 +76,34 @@ button{cursor:pointer}
 .empty-form input{flex:1}
 .empty-form button{border:0;border-radius:11px;background:var(--accent);color:var(--accent-ink);font:700 13px Manrope;padding:0 16px;white-space:nowrap;display:flex;align-items:center;gap:4px}
 
+/* Full-stage overlay used for two things that *need* a real tap: starting
+   playback when the browser's autoplay policy refused a remote play(), and
+   unmuting after we fell back to a muted start. Also hosts diagnostics
+   when a provider can't be reached at all. */
+.stage-overlay{position:absolute;inset:0;z-index:7;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:20px;text-align:center;background:rgba(6,9,12,.78);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);border-radius:18px}
+.stage-overlay.soft{background:transparent;backdrop-filter:none;-webkit-backdrop-filter:none;justify-content:flex-end;align-items:flex-start;pointer-events:none}
+.stage-overlay.soft>*{pointer-events:auto}
+.overlay-btn{display:flex;align-items:center;gap:10px;border:0;border-radius:999px;background:var(--accent);color:var(--accent-ink);font:800 15px Manrope;padding:14px 22px;box-shadow:0 12px 40px #0008}
+.overlay-btn.small{font-size:13px;padding:10px 16px;margin:0 0 14px 14px}
+.overlay-text{color:var(--text-dim);font-size:13px;max-width:380px;line-height:1.45;margin:0}
+.overlay-pill{display:flex;align-items:center;gap:8px;margin:0 0 14px 14px;padding:10px 14px;border-radius:999px;background:rgba(9,13,11,.82);border:1px solid rgba(255,255,255,.16);color:#e2efe7;font:600 12px Manrope;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);pointer-events:none}
+.diag{max-width:440px;background:var(--panel);border:1px solid var(--border);border-radius:16px;padding:18px 18px 14px;text-align:left}
+.diag h3{margin:0 0 8px;font-size:15px}
+.diag p,.diag li{color:var(--text-dim);font-size:13px;line-height:1.45;margin:0}
+.diag ol{margin:8px 0 12px;padding-left:18px;display:flex;flex-direction:column;gap:6px}
+.diag-actions{display:flex;gap:8px;flex-wrap:wrap}
+.diag-actions button{border:1px solid var(--border);border-radius:10px;background:var(--panel-2);color:var(--text);font:600 12px Manrope;padding:9px 12px}
+.diag-actions button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
+.diag code{font:11px 'DM Mono',monospace;color:var(--text)}
+.hint-banner{display:flex;align-items:center;gap:10px;margin:0 20px 10px;padding:10px 14px;border-radius:12px;background:#2a2410;border:1px solid #5a4a1a;color:#f3e4b0;font-size:12px;line-height:1.4;flex:0 0 auto}
+.hint-banner button{margin-left:auto;border:0;background:transparent;color:inherit;font:700 12px Manrope;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
+.room-pill{display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--panel);border-radius:11px;height:38px;padding:0 12px;font:11px 'DM Mono',monospace;color:var(--text-dim);cursor:pointer;white-space:nowrap}
+.room-pill b{color:var(--text);font-weight:600;letter-spacing:.5px}
+.room-pill:hover{background:var(--panel-2)}
+.join-row{display:flex;gap:8px;padding:0 20px 14px;flex:0 0 auto;align-items:center}
+.join-row span{font-size:12px;color:var(--text-dim);white-space:nowrap}
+.join-row input{flex:1;min-width:0;font-family:'DM Mono',monospace;letter-spacing:.5px}
+.join-row button{border:1px solid var(--border);border-radius:11px;background:var(--panel-2);color:var(--text);font:700 13px Manrope;padding:0 16px;height:38px}
 .stage-badges{position:absolute;top:12px;right:12px;left:12px;display:flex;gap:6px;z-index:5;flex-wrap:wrap;justify-content:flex-end;pointer-events:none}
 .badge{display:flex;align-items:center;gap:7px;background:rgba(9,13,11,.74);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:4px 11px 4px 4px;font:11px 'DM Mono',monospace;color:#e2efe7;pointer-events:auto}
 .badge-avatar{width:22px;height:22px;border-radius:50%;display:grid;place-items:center;font:700 10px Manrope;color:#fff;flex:0 0 auto}
@@ -168,6 +196,13 @@ input::placeholder{color:var(--text-faint)}
   input,.chat-form input{font-size:16px}
   .account-pill{padding:0;width:38px;border-color:transparent;background:transparent}
   .account-pill span:last-child{display:none}
+  .room-pill{padding:0 10px}
+  .room-pill span{display:none}
+  .stage-overlay{border-radius:14px;padding:14px}
+  .overlay-btn{font-size:14px;padding:12px 18px}
+  .diag{padding:14px}
+  .hint-banner{margin:0 10px 8px}
+  .join-row{padding:0 20px 10px;flex-wrap:wrap}
 }
 @media(max-width:420px){
   .brand{font-size:16px}
