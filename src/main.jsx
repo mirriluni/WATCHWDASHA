@@ -1,7 +1,7 @@
 import React, { Component, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { parseVideoUrl } from '../shared/video-url.js';
-import { playerFor } from './players.js';
+import { playerFor, probeVkHosts } from './players.js';
 import './style.css';
 
 const makeRoom = () => Math.random().toString(36).slice(2, 8);
@@ -52,10 +52,11 @@ const describePlayerError = (error, video) => {
   const vk = video?.provider === 'vk';
   const open = vk ? 'Открыть в VK Видео' : 'Открыть на сайте источника';
   if (error.code === 'unreachable' || error.code === 'sdk' || error.code === 'init') return {
-    title: vk ? 'VK Видео не отвечает' : 'Плеер не загрузился',
-    text: vk ? 'Ни один из адресов VK (vkvideo.ru, vk.com, vk.ru) не ответил, или скрипт плеера заблокирован.' : 'Скрипт плеера не загрузился.',
+    title: vk ? 'VK Видео не отвечает с вашего интернета' : 'Плеер не загрузился',
+    text: vk ? `Ни один из адресов VK (vkvideo.ru, vk.com, vk.ru) не ответил${error.probes ? ` — проверка заняла ${Math.max(...error.probes.map(p => p.ms))} мс` : ''}. Это блокировка со стороны сети/страны, VPN или блокировщика — у другого человека в комнате при этом всё может работать.` : 'Скрипт плеера не загрузился.',
     steps: [
-      IN_APP_BROWSER ? 'Откройте сайт в обычном браузере (Safari или Chrome), а не внутри Telegram/Instagram — там VK чаще всего не работает.' : null,
+      IN_APP_BROWSER ? 'Сайт открыт внутри Telegram/Instagram — нажмите «⋯» → «Открыть в браузере» (Safari или Chrome). Во встроенном браузере VK чаще всего не работает.' : null,
+      IS_IOS && !IN_APP_BROWSER ? 'iPhone/Safari: Настройки → Safari → выключите «Не отслеживать» (Prevent Cross-Site Tracking) и отключите контент-блокировщики для этого сайта — VK прямо пишет, что из-за них плеер не загружается. Либо откройте сайт в Chrome.' : null,
       'Если включён VPN — выключите его; если выключен — попробуйте включить (VK блокируют в одних странах и не любят VPN-адреса в других).',
       'Отключите блокировщик рекламы для этого сайта. В Safari: Настройки → Safari → выключите «Не отслеживать» (VK прямо пишет, что из-за этого плеер не работает).',
       'Нажмите «Попробовать снова» — иногда помогает просто перезапуск плеера.',
@@ -173,6 +174,10 @@ function Room({ account, onLogout }) {
   // need a gesture to turn sound on; null = nothing to show.
   const [overlay, setOverlay] = useState(null);
   const [playerError, setPlayerError] = useState(null);
+  const [playerReady, setPlayerReady] = useState(false);
+  const [loadStatus, setLoadStatus] = useState('');
+  const loadStartedAt = useRef(0);
+  const [diag, setDiag] = useState(null);
   const [hintDismissed, setHintDismissed] = useState(() => { try { return !!localStorage.getItem('wt_hint_dismissed'); } catch { return true; } });
   const [people, setPeople] = useState([]); const [notice, setNotice] = useState('Вставьте ссылку, чтобы начать');
   const [messages, setMessages] = useState([]); const [chat, setChat] = useState(''); const [you, setYou] = useState(null);
@@ -313,7 +318,7 @@ function Room({ account, onLogout }) {
   const inAd = useRef(false);
   const load = useCallback(async (nextVideo, sync) => {
     const gen = ++loadGen.current;
-    dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); setPlayerError(null); setOverlay(null); inAd.current = false; if (!nextVideo) return;
+    dispose(); currentVideo.current = nextVideo; setVideo(nextVideo); setPlayerError(null); setOverlay(null); setPlayerReady(false); setLoadStatus('Загружаем плеер…'); loadStartedAt.current = Date.now(); inAd.current = false; if (!nextVideo) return;
     const elapsed0 = sync?.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
     const startTime = sync ? Math.max(0, sync.currentTime + elapsed0) : 0;
     playback.current = sync ? { state: sync.state, currentTime: startTime, updatedAt: Date.now() } : { state: 'paused', currentTime: 0, updatedAt: Date.now() };
@@ -337,9 +342,10 @@ function Room({ account, onLogout }) {
       if (gen !== loadGen.current) { instance.destroy(); return; }
       player.current = instance;
       const timeOf = () => instance.getCurrentTime().catch(() => playback.current.currentTime);
+      instance.on('status', ({ text }) => { if (player.current === instance) setLoadStatus(text); });
       instance.on('ready', async () => {
         if (player.current !== instance) return;
-        setNotice('Видео готово'); setPlayerError(null);
+        setNotice('Видео готово'); setPlayerError(null); setPlayerReady(true);
         if (!sync) return;
         const elapsed = sync.state === 'playing' ? (Date.now() - sync.updatedAt) / 1000 : 0;
         const target = Math.max(0, sync.currentTime + elapsed);
@@ -488,7 +494,16 @@ function Room({ account, onLogout }) {
     if (code === roomId) { setShowAdd(false); return; }
     saveLastRoom(code); location.href = `/room/${code}`;
   };
-  const retryPlayer = () => { if (currentVideo.current) load(currentVideo.current, playback.current); };
+  const retryPlayer = () => { setDiag(null); if (currentVideo.current) load(currentVideo.current, playback.current); };
+  // Manual diagnostics: a screenshot of this panel tells us exactly which
+  // VK hosts are reachable from *that* phone/network, whether the SDK
+  // loaded, and what browser it really is - instead of guessing remotely.
+  const openDiag = async () => {
+    setDiag({ loading: true });
+    const probes = await probeVkHosts(true).catch(() => []);
+    let state = null; try { state = await Promise.race([player.current?.getState(), new Promise(r => setTimeout(() => r('—'), 1500))]); } catch { state = 'ошибка'; }
+    setDiag({ loading: false, probes, state: state ?? '—', sdk: !!window.VK?.VideoPlayer, ua: UA, inApp: IN_APP_BROWSER, ios: IS_IOS, online: navigator.onLine });
+  };
   const dismissHint = () => { setHintDismissed(true); try { localStorage.setItem('wt_hint_dismissed', '1'); } catch { /* ignore */ } };
   const add = e => { e.preventDefault(); try { parseVideoUrl(url); send({ type: 'loadVideo', url }); setUrl(''); setShowAdd(false); } catch (error) { flashNotice(error.message); } };
   // Opening the panel used to always start from a blank field, so there was
@@ -598,6 +613,30 @@ function Room({ account, onLogout }) {
             })}
             {overflow > 0 && <div className="badge more">+{overflow}</div>}
           </div>}
+          {video && !playerReady && !playerError && !diag && <div className="stage-overlay">
+            <div className="spinner" />
+            <p className="overlay-text"><b>{loadStatus || 'Загружаем плеер…'}</b></p>
+            {Date.now() - loadStartedAt.current > 7000 && <p className="overlay-text">Долго? Не обновляйте страницу — сайт сам перебирает адреса VK. {IS_IOS ? 'На iPhone чаще всего мешает Safari: Настройки → Safari → выключите «Не отслеживать», или откройте сайт в Chrome.' : ''}</p>}
+            {Date.now() - loadStartedAt.current > 7000 && <button className="overlay-btn small" onClick={openDiag}>Что не так?</button>}
+          </div>}
+          {video && diag && <div className="stage-overlay"><div className="diag">
+            <h3>Диагностика</h3>
+            {diag.loading ? <p>Проверяем адреса VK…</p> : <>
+              <ul className="diag-list">
+                {diag.probes.map(p => <li key={p.host}><code>{p.host}</code> — {p.ok ? `отвечает (${p.ms} мс)` : `НЕ отвечает (${p.error || 'ошибка'})`}</li>)}
+                <li>Скрипт плеера VK: <code>{diag.sdk ? 'загружен' : 'не загружен'}</code></li>
+                <li>Состояние плеера: <code>{String(diag.state)}</code></li>
+                <li>Браузер: <code>{diag.inApp ? 'встроенный (Telegram/Instagram и т.п.)' : diag.ios ? 'iOS' : 'обычный'}</code>, интернет: <code>{diag.online ? 'есть' : 'нет'}</code></li>
+                <li className="diag-ua">{diag.ua}</li>
+              </ul>
+              <p>{diag.probes.every(p => !p.ok) ? 'Ни один адрес VK не отвечает с этого интернета. Это блокировка сети/страны или блокировщик — включите/выключите VPN либо смените сеть (Wi-Fi ↔ мобильный).' : !diag.sdk ? 'Адреса VK отвечают, но скрипт плеера не загрузился — отключите блокировщик рекламы и «Не отслеживать» в Safari (Настройки → Safari), или откройте сайт в Chrome.' : diag.state === 'uninited' || diag.state === '—' ? 'VK отвечает и скрипт загружен, но сам плеер внутри не запускается — почти всегда это Safari-защита «Не отслеживать» (Настройки → Safari → выключить) или контент-блокировщик. Проще всего открыть сайт в Chrome.' : 'VK доступен и плеер инициализирован. Если видео не идёт — нажмите ▶ прямо на плеере, вы догоните комнату автоматически.'}</p>
+            </>}
+            <div className="diag-actions">
+              <button className="primary" onClick={retryPlayer}>Перезапустить плеер</button>
+              {video.originalUrl && <button onClick={() => window.open(video.originalUrl, '_blank', 'noopener')}>Открыть в VK</button>}
+              <button onClick={() => setDiag(null)}>Закрыть</button>
+            </div>
+          </div></div>}
           {video && !playerError && overlay === 'tap' && <div className="stage-overlay">
             <button className="overlay-btn" onClick={tapToPlay}><IconPlay />Смотреть вместе</button>
             <p className="overlay-text">Браузер не даёт запустить видео без вашего касания. Одно нажатие — и вы на той же секунде, что и все.</p>
@@ -623,6 +662,7 @@ function Room({ account, onLogout }) {
           <div className="toolbar-notice"><span className={`dot ${connected ? 'on' : ''}`} />{notice}</div>
           <div className="toolbar-actions">
             <span className="watch-count" title={people.map(p => p.id === you?.id ? 'Вы' : (p.name || 'Гость')).join(', ')}>{formatWatchers(people, you?.id)}</span>
+            {video && <button className="help-btn" onClick={openDiag}>Не грузится?</button>}
             <button className="sync-btn" onClick={syncEveryone} disabled={people.length <= 1}><IconRefresh /><span>Синхронизировать</span></button>
           </div>
         </div>

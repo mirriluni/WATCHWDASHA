@@ -95,6 +95,12 @@ button{cursor:pointer}
 .diag-actions button{border:1px solid var(--border);border-radius:10px;background:var(--panel-2);color:var(--text);font:600 12px Manrope;padding:9px 12px}
 .diag-actions button.primary{background:var(--accent);color:var(--accent-ink);border-color:transparent}
 .diag code{font:11px 'DM Mono',monospace;color:var(--text)}
+.diag-list{list-style:none;margin:6px 0 12px;padding:0;display:flex;flex-direction:column;gap:5px}
+.diag-ua{font:10px 'DM Mono',monospace;color:var(--text-faint);word-break:break-all;margin-top:4px}
+.help-btn{border:1px solid var(--border);background:transparent;color:var(--text-dim);font:600 12px Manrope;padding:9px 11px;border-radius:11px;white-space:nowrap}
+.help-btn:hover{background:var(--panel-2);color:var(--text)}
+.spinner{width:34px;height:34px;border-radius:50%;border:3px solid rgba(255,255,255,.15);border-top-color:var(--accent);animation:spin .9s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .hint-banner{display:flex;align-items:center;gap:10px;margin:0 20px 10px;padding:10px 14px;border-radius:12px;background:#2a2410;border:1px solid #5a4a1a;color:#f3e4b0;font-size:12px;line-height:1.4;flex:0 0 auto}
 .hint-banner button{margin-left:auto;border:0;background:transparent;color:inherit;font:700 12px Manrope;text-decoration:underline;text-underline-offset:2px;white-space:nowrap}
 .room-pill{display:flex;align-items:center;gap:6px;border:1px solid var(--border);background:var(--panel);border-radius:11px;height:38px;padding:0 12px;font:11px 'DM Mono',monospace;color:var(--text-dim);cursor:pointer;white-space:nowrap}

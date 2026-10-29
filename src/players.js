@@ -90,7 +90,27 @@ export class TwitchPlayer extends BasePlayer {
 // being blocked while another works is normal, so we try them in turn
 // instead of hard-coding one and failing for everyone it doesn't resolve for.
 export const VK_HOSTS = ['vkvideo.ru', 'vk.com', 'vk.ru'];
-const VK_INIT_TIMEOUT_MS = 12000;
+const VK_INIT_TIMEOUT_MS = 9000;
+
+// Opaque no-cors GET of the SDK script: resolves if the host answers at all
+// (any status), rejects on DNS failure, connection block, or a content
+// blocker. That's enough to tell "VK unreachable from this network" apart
+// from "VK reachable but this video is broken" in ~2s instead of waiting for
+// three 9s init timeouts in a row.
+export async function probeHost(host, timeoutMs = 3500) {
+  const started = Date.now(); const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try { await fetch(`https://${host}/js/api/videoplayer.js`, { mode: 'no-cors', cache: 'no-store', signal: ctl.signal }); return { host, ok: true, ms: Date.now() - started }; }
+  catch (error) { return { host, ok: false, ms: Date.now() - started, error: error?.name || 'error' }; }
+  finally { clearTimeout(timer); }
+}
+let probeCache = null;
+export async function probeVkHosts(force = false) {
+  if (!force && probeCache && Date.now() - probeCache.at < 60000) return probeCache.results;
+  const results = await Promise.all(VK_HOSTS.map(h => probeHost(h)));
+  probeCache = { at: Date.now(), results };
+  return results;
+}
 const vkTime = seconds => { const s = Math.max(0, Math.floor(seconds)); return `${Math.floor(s / 3600)}h${Math.floor((s % 3600) / 60)}m${s % 60}s`; };
 
 export class VkPlayer extends BasePlayer {
@@ -100,7 +120,15 @@ export class VkPlayer extends BasePlayer {
     this.hostIndex = 0; this.destroyed = false; this.inited = false;
     this.ready = new Promise((resolve, reject) => { this.resolveReady = resolve; this.rejectReady = reject; });
     this.ready.catch(() => {});
-    this.attach();
+    this.emit('status', { text: 'Проверяем, какой адрес VK доступен…' });
+    probeVkHosts().then(results => {
+      if (this.destroyed) return;
+      const firstOk = VK_HOSTS.findIndex(h => results.find(r => r.host === h)?.ok);
+      if (firstOk === -1) { this.emit('error', { code: 'unreachable', reason: 'probe', probes: results }); this.rejectReady(new Error('VK unreachable')); return; }
+      this.hostIndex = firstOk;
+      this.emit('status', { text: `Загружаем плеер VK (${this.host})…` });
+      this.attach();
+    });
   }
   get host() { return VK_HOSTS[this.hostIndex]; }
   embedSrc() {
@@ -140,8 +168,8 @@ export class VkPlayer extends BasePlayer {
   applyState(state) { if (Number.isFinite(state?.time)) this.currentTime = state.time; if (Number.isFinite(state?.duration)) this.duration = state.duration; if (state?.state) this.state = state.state; }
   nextHost(reason) {
     if (this.destroyed || this.inited) return;
-    if (this.hostIndex < VK_HOSTS.length - 1) { this.hostIndex++; this.emit('retrying', { host: this.host, reason }); this.attach(); return; }
-    this.emit('error', { code: 'unreachable', reason });
+    if (this.hostIndex < VK_HOSTS.length - 1) { this.hostIndex++; this.emit('retrying', { host: this.host, reason }); this.emit('status', { text: `VK не ответил, пробуем ${this.host}…` }); this.attach(); return; }
+    this.emit('error', { code: 'unreachable', reason, probes: probeCache?.results });
     this.rejectReady(new Error('VK video unreachable'));
   }
   async play(){ await this.ready; this.player.play(); } async pause(){ await this.ready; this.player.pause(); } async seek(t){ await this.ready; this.player.seek(t); }
